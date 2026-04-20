@@ -434,6 +434,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "quality-cli"
+version = "0.1.0"
+dependencies = [
+ "ast-parse",
+ "clap",
+ "quality-common",
+ "serde",
+ "serde_json",
+ "syn",
+]
+
+[[package]]
 name = "quality-common"
 version = "0.1.0"
 dependencies = [

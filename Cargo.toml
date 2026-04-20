@@ -9,6 +9,7 @@ members = [
     "crates/duplication",
     "crates/coupling",
     "crates/risk-map",
+    "crates/quality-cli",
 ]
 resolver = "2"
 
