@@ -201,7 +201,9 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 name = "coupling"
 version = "0.1.0"
 dependencies = [
+ "assert_cmd",
  "clap",
+ "predicates",
  "quality-common",
  "serde",
  "serde_json",
@@ -224,8 +226,10 @@ dependencies = [
 name = "debt-scan"
 version = "0.1.0"
 dependencies = [
+ "assert_cmd",
  "chrono",
  "clap",
+ "predicates",
  "quality-common",
  "serde",
  "serde_json",
@@ -241,8 +245,10 @@ checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 name = "doc-coverage"
 version = "0.1.0"
 dependencies = [
+ "assert_cmd",
  "ast-parse",
  "clap",
+ "predicates",
  "quality-common",
  "serde",
  "serde_json",
@@ -253,8 +259,10 @@ dependencies = [
 name = "duplication"
 version = "0.1.0"
 dependencies = [
+ "assert_cmd",
  "ast-parse",
  "clap",
+ "predicates",
  "quality-common",
  "serde",
  "serde_json",
@@ -476,8 +484,10 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 name = "risk-map"
 version = "0.1.0"
 dependencies = [
+ "assert_cmd",
  "ast-parse",
  "clap",
+ "predicates",
  "quality-common",
  "serde",
  "serde_json",
