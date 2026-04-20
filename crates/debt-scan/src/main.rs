@@ -99,6 +99,11 @@ fn main() {
 
                 for pattern in &patterns {
                     if trimmed.contains(pattern) {
+                        // Skip markers that appear inside string literals
+                        if is_marker_in_string(trimmed, marker_name) {
+                            continue;
+                        }
+
                         // Filter out if not requested
                         if let Some(ref filter) = marker_filter {
                             if !filter.contains(&marker_type.to_string()) {
@@ -139,6 +144,36 @@ fn main() {
         "json" => output_json(&items),
         _ => output_table(&items),
     }
+}
+
+fn is_marker_in_string(line: &str, marker: &str) -> bool {
+    // Check if the marker appears between quotes (inside a string literal)
+    // Look for patterns like "\"TODO" or "TODO\"" or within quoted strings
+    let mut in_string = false;
+    let mut prev_char = '\0';
+    let chars: Vec<char> = line.chars().collect();
+    let marker_chars: Vec<char> = marker.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '"' && prev_char != '\\' {
+            in_string = !in_string;
+        }
+
+        if in_string {
+            // Check if marker starts here
+            if i + marker_chars.len() <= chars.len() {
+                let slice: String = chars[i..i + marker_chars.len()].iter().collect();
+                if slice == marker {
+                    return true;
+                }
+            }
+        }
+
+        prev_char = chars[i];
+        i += 1;
+    }
+    false
 }
 
 fn extract_comment_text(line: &str, marker: &str) -> String {

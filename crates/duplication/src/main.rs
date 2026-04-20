@@ -348,3 +348,208 @@ fn output_json(groups: &[DuplicateGroup]) {
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_expr(source: &str) -> Expr {
+        let full = format!("fn _t() {{ {} }}", source);
+        let file: syn::File = syn::parse_str(&full).unwrap();
+        if let syn::Item::Fn(f) = &file.items[0] {
+            if let Stmt::Expr(e, _) = &f.block.stmts[0] {
+                return e.clone();
+            }
+        }
+        panic!("Failed to parse test expression: {}", source);
+    }
+
+    #[test]
+    fn test_normalize_if() {
+        assert_eq!(normalize_expr(&parse_expr("if x { 1 }")), "IF");
+    }
+
+    #[test]
+    fn test_normalize_match() {
+        assert_eq!(normalize_expr(&parse_expr("match x { _ => 1 }")), "MATCH");
+    }
+
+    #[test]
+    fn test_normalize_while() {
+        assert_eq!(normalize_expr(&parse_expr("while x { 1 }")), "WHILE");
+    }
+
+    #[test]
+    fn test_normalize_for() {
+        assert_eq!(normalize_expr(&parse_expr("for x in y { 1 }")), "FOR");
+    }
+
+    #[test]
+    fn test_normalize_loop() {
+        assert_eq!(normalize_expr(&parse_expr("loop { 1 }")), "LOOP");
+    }
+
+    #[test]
+    fn test_normalize_return() {
+        assert_eq!(normalize_expr(&parse_expr("return 1")), "RETURN");
+    }
+
+    #[test]
+    fn test_normalize_break() {
+        assert_eq!(normalize_expr(&parse_expr("break")), "BREAK");
+    }
+
+    #[test]
+    fn test_normalize_continue() {
+        assert_eq!(normalize_expr(&parse_expr("continue")), "CONTINUE");
+    }
+
+    #[test]
+    fn test_normalize_block() {
+        assert_eq!(normalize_expr(&parse_expr("{ 1 }")), "BLOCK");
+    }
+
+    #[test]
+    fn test_normalize_call() {
+        assert_eq!(normalize_expr(&parse_expr("foo(1)")), "CALL(PATH)");
+    }
+
+    #[test]
+    fn test_normalize_method() {
+        assert_eq!(normalize_expr(&parse_expr("x.method()")), "METHOD(method)");
+    }
+
+    #[test]
+    fn test_normalize_assign() {
+        assert_eq!(normalize_expr(&parse_expr("x = 1")), "ASSIGN");
+    }
+
+    #[test]
+    fn test_normalize_binary_ops() {
+        assert_eq!(normalize_expr(&parse_expr("1 + 2")), "BIN(+)");
+        assert_eq!(normalize_expr(&parse_expr("1 - 2")), "BIN(-)");
+        assert_eq!(normalize_expr(&parse_expr("1 * 2")), "BIN(*)");
+        assert_eq!(normalize_expr(&parse_expr("1 / 2")), "BIN(/)");
+        assert_eq!(normalize_expr(&parse_expr("1 == 2")), "BIN(==)");
+        assert_eq!(normalize_expr(&parse_expr("1 != 2")), "BIN(!=)");
+        assert_eq!(normalize_expr(&parse_expr("1 < 2")), "BIN(<)");
+        assert_eq!(normalize_expr(&parse_expr("1 > 2")), "BIN(>)");
+        assert_eq!(normalize_expr(&parse_expr("1 <= 2")), "BIN(<=)");
+        assert_eq!(normalize_expr(&parse_expr("1 >= 2")), "BIN(>=)");
+    }
+
+    #[test]
+    fn test_normalize_logical_ops() {
+        assert_eq!(normalize_expr(&parse_expr("a && b")), "BIN(&&)");
+        assert_eq!(normalize_expr(&parse_expr("a || b")), "BIN(||)");
+    }
+
+    #[test]
+    fn test_normalize_unary() {
+        assert_eq!(normalize_expr(&parse_expr("!x")), "UNARY(!)");
+        assert_eq!(normalize_expr(&parse_expr("-x")), "UNARY(-)");
+    }
+
+    #[test]
+    fn test_normalize_lit() {
+        assert_eq!(normalize_expr(&parse_expr("42")), "LIT");
+        assert_eq!(normalize_expr(&parse_expr("\"hello\"")), "LIT");
+        assert_eq!(normalize_expr(&parse_expr("true")), "LIT");
+    }
+
+    #[test]
+    fn test_normalize_path() {
+        assert_eq!(normalize_expr(&parse_expr("std::mem::size_of::<u8>()")), "CALL(PATH)");
+    }
+
+    #[test]
+    fn test_normalize_closure() {
+        assert_eq!(normalize_expr(&parse_expr("|x| x + 1")), "CLOSURE");
+    }
+
+    #[test]
+    fn test_normalize_tuple() {
+        assert_eq!(normalize_expr(&parse_expr("(1, 2)")), "TUPLE");
+    }
+
+    #[test]
+    fn test_normalize_array() {
+        assert_eq!(normalize_expr(&parse_expr("[1, 2, 3]")), "ARRAY");
+    }
+
+    #[test]
+    fn test_normalize_index() {
+        assert_eq!(normalize_expr(&parse_expr("x[0]")), "INDEX");
+    }
+
+    #[test]
+    fn test_normalize_field() {
+        assert_eq!(normalize_expr(&parse_expr("x.field")), "FIELD");
+    }
+
+    #[test]
+    fn test_normalize_block_expr() {
+        let source = "fn _t() { let x = if y { 1 } else { 2 }; }";
+        let file: syn::File = syn::parse_str(source).unwrap();
+        if let syn::Item::Fn(f) = &file.items[0] {
+            if let Stmt::Local(local) = &f.block.stmts[0] {
+                let init = local.init.as_ref().unwrap();
+                assert_eq!(normalize_expr(&init.expr), "IF");
+            }
+        }
+    }
+
+    #[test]
+    fn test_normalize_stmt_let() {
+        let source = "fn _t() { let x = 1; }";
+        let file: syn::File = syn::parse_str(source).unwrap();
+        if let syn::Item::Fn(f) = &file.items[0] {
+            assert_eq!(normalize_stmt(&f.block.stmts[0]), "LET=EXPR");
+        }
+    }
+
+    #[test]
+    fn test_normalize_stmt_expr() {
+        let source = "fn _t() { foo(); }";
+        let file: syn::File = syn::parse_str(source).unwrap();
+        if let syn::Item::Fn(f) = &file.items[0] {
+            assert_eq!(normalize_stmt(&f.block.stmts[0]), "CALL(PATH)");
+        }
+    }
+
+    #[test]
+    fn test_normalize_block_multi() {
+        let source = r#"fn _t() {
+            let x = 1;
+            if x > 0 { foo(); }
+            x
+        }"#;
+        let file: syn::File = syn::parse_str(source).unwrap();
+        if let syn::Item::Fn(f) = &file.items[0] {
+            let pattern = normalize_block(&f.block);
+            assert_eq!(pattern, "LET=EXPR;IF;PATH");
+        }
+    }
+
+    #[test]
+    fn test_pattern_similarity_identical() {
+        assert!((pattern_similarity("A;B;C", "A;B;C") - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_pattern_similarity_disjoint() {
+        assert!((pattern_similarity("A;B;C", "D;E;F") - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_pattern_similarity_partial() {
+        let sim = pattern_similarity("A;B;C", "A;B;D");
+        assert!(sim >= 0.5 && sim < 1.0, "Expected >= 0.5, got {}", sim);
+    }
+
+    #[test]
+    fn test_pattern_similarity_empty() {
+        assert_eq!(pattern_similarity("", "A"), 0.0);
+        assert_eq!(pattern_similarity("A", ""), 0.0);
+    }
+}
+

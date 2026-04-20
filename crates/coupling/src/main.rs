@@ -1,7 +1,7 @@
 use clap::Parser;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "coupling", about = "Coupling analysis -- module dependency graphs, fan-in/fan-out")]
@@ -61,6 +61,9 @@ fn main() {
     let mut module_files: HashMap<String, String> = HashMap::new();
     find_modules(&src_path, &src_path, &mut file_modules, &mut module_files);
 
+    // Parse workspace Cargo.toml to identify internal crates
+    let internal_crates = find_workspace_crates(&cli.path);
+
     // Parse imports from each module
     let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
 
@@ -70,7 +73,7 @@ fn main() {
             Err(_) => continue,
         };
 
-        let imports = extract_imports(&source, module_name);
+        let imports = extract_imports(&source, module_name, &internal_crates);
         dependencies.insert(module_name.clone(), imports);
     }
 
@@ -127,7 +130,56 @@ fn find_modules(dir: &Path, base: &Path, file_map: &mut HashMap<String, String>,
     }
 }
 
-fn extract_imports(source: &str, current_module: &str) -> HashSet<String> {
+fn find_workspace_crates(start_path: &str) -> HashSet<String> {
+    let mut crates = HashSet::new();
+    let mut current = PathBuf::from(start_path);
+
+    // Walk up to find workspace Cargo.toml
+    loop {
+        let cargo_toml = current.join("Cargo.toml");
+        if cargo_toml.exists() {
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                // Check if this is a workspace
+                if content.contains("[workspace]") {
+                    // Parse workspace members
+                    let mut in_members = false;
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("members") {
+                            in_members = true;
+                            continue;
+                        }
+                        if in_members {
+                            if trimmed == "]" {
+                                break;
+                            }
+                            // Extract crate name from path like "crates/ast-parse"
+                            if let Some(path_str) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"').or(Some(s))) {
+                                let path_str = path_str.trim_end_matches('"').trim_end_matches(',');
+                                let crate_name = Path::new(path_str)
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                if !crate_name.is_empty() {
+                                    crates.insert(crate_name);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+
+    crates
+}
+
+fn extract_imports(source: &str, current_module: &str, internal_crates: &HashSet<String>) -> HashSet<String> {
     let mut imports = HashSet::new();
     let crate_prefix = current_module.split("::").next().unwrap_or(current_module);
 
@@ -148,6 +200,22 @@ fn extract_imports(source: &str, current_module: &str) -> HashSet<String> {
                     .unwrap_or(use_path);
                 if module != crate_prefix {
                     imports.insert(format!("{}::{}", crate_prefix, module));
+                }
+            } else {
+                // Match cross-crate imports: `use <crate_name>::`
+                // Extract the first segment as potential crate name
+                let first_segment = use_path.split("::").next().unwrap_or("");
+                // Skip std library, common keywords, and relative imports
+                if !first_segment.is_empty()
+                    && !first_segment.starts_with("std")
+                    && !first_segment.starts_with("core")
+                    && !first_segment.starts_with("alloc")
+                    && first_segment != "self"
+                    && first_segment != "super"
+                {
+                    // This is a cross-crate import - add as external dependency
+                    // Format: "crate::<crate_name>" to distinguish from internal modules
+                    imports.insert(format!("crate::{}", first_segment));
                 }
             }
         }

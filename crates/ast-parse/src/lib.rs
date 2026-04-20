@@ -166,6 +166,7 @@ pub struct FileCoverage {
 
 /// Coverage percentage for a file (0-100)
 impl FileCoverage {
+    /// Calculate line coverage as a percentage (0-100). Returns 100.0 if no lines were found.
     pub fn coverage_pct(&self) -> f64 {
         if self.lines_found == 0 {
             return 100.0;
