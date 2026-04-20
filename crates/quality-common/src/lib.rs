@@ -38,6 +38,18 @@ pub fn find_source_files(path: &str, recursive: bool, extensions: &[&str]) -> Ve
     files
 }
 
+/// Check whether a file path has one of the given extensions.
+fn should_include_file(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .map_or(false, |ext| extensions.contains(&ext.to_string_lossy().as_ref()))
+}
+
+/// Check whether a directory should be traversed (not a skipped/hidden dir).
+fn should_scan_dir(path: &Path) -> bool {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    !matches!(name.as_ref(), "target" | ".git" | "node_modules") && !name.starts_with('.')
+}
+
 /// Recursively scan a directory for files with given extensions.
 /// Skips target/, .git/, node_modules/, and hidden directories.
 pub fn scan_dir(dir: &Path, recursive: bool, extensions: &[&str], files: &mut Vec<String>) {
@@ -48,17 +60,10 @@ pub fn scan_dir(dir: &Path, recursive: bool, extensions: &[&str], files: &mut Ve
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if extensions.contains(&ext.to_string_lossy().as_ref()) {
-                    files.push(path.to_string_lossy().to_string());
-                }
-            }
-        } else if recursive && path.is_dir() {
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            if name != "target" && name != ".git" && name != "node_modules" && !name.starts_with('.') {
-                scan_dir(&path, recursive, extensions, files);
-            }
+        if path.is_file() && should_include_file(&path, extensions) {
+            files.push(path.to_string_lossy().to_string());
+        } else if recursive && path.is_dir() && should_scan_dir(&path) {
+            scan_dir(&path, recursive, extensions, files);
         }
     }
 }

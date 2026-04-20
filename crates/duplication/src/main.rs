@@ -162,58 +162,97 @@ fn normalize_item(item: &syn::Item) -> String {
     }
 }
 
+fn normalize_binop(op: &syn::BinOp) -> &'static str {
+    match op {
+        // Arithmetic
+        syn::BinOp::Add(_) | syn::BinOp::Sub(_)
+        | syn::BinOp::Mul(_) | syn::BinOp::Div(_) => normalize_arithop(op),
+        // Comparison
+        syn::BinOp::Eq(_) | syn::BinOp::Ne(_)
+        | syn::BinOp::Lt(_) | syn::BinOp::Le(_)
+        | syn::BinOp::Gt(_) | syn::BinOp::Ge(_) => normalize_cmpop(op),
+        // Logical
+        syn::BinOp::And(_) | syn::BinOp::Or(_) => normalize_logicop(op),
+        _ => "OP",
+    }
+}
+
+fn normalize_arithop(op: &syn::BinOp) -> &'static str {
+    match op {
+        syn::BinOp::Add(_) => "+",
+        syn::BinOp::Sub(_) => "-",
+        syn::BinOp::Mul(_) => "*",
+        syn::BinOp::Div(_) => "/",
+        _ => "OP",
+    }
+}
+
+fn normalize_cmpop(op: &syn::BinOp) -> &'static str {
+    match op {
+        syn::BinOp::Eq(_) => "==",
+        syn::BinOp::Ne(_) => "!=",
+        syn::BinOp::Lt(_) => "<",
+        syn::BinOp::Le(_) => "<=",
+        syn::BinOp::Gt(_) => ">",
+        syn::BinOp::Ge(_) => ">=",
+        _ => "OP",
+    }
+}
+
+fn normalize_logicop(op: &syn::BinOp) -> &'static str {
+    match op {
+        syn::BinOp::And(_) => "&&",
+        syn::BinOp::Or(_) => "||",
+        _ => "OP",
+    }
+}
+
+fn normalize_unop(op: &syn::UnOp) -> &'static str {
+    match op {
+        syn::UnOp::Not(_) => "!",
+        syn::UnOp::Neg(_) => "-",
+        _ => "~",
+    }
+}
+
 fn normalize_expr(expr: &Expr) -> String {
+    if let Some(s) = normalize_simple_expr(expr) {
+        return s.to_string();
+    }
+    normalize_complex_expr(expr)
+}
+
+/// Normalize simple expression variants that map to a literal string label.
+fn normalize_simple_expr(expr: &Expr) -> Option<&'static str> {
     match expr {
-        Expr::If(_) => "IF".to_string(),
-        Expr::Match(_) => "MATCH".to_string(),
-        Expr::While(_) => "WHILE".to_string(),
-        Expr::ForLoop(_) => "FOR".to_string(),
-        Expr::Loop(_) => "LOOP".to_string(),
-        Expr::Return(_) => "RETURN".to_string(),
-        Expr::Break(_) => "BREAK".to_string(),
-        Expr::Continue(_) => "CONTINUE".to_string(),
-        Expr::Block(_) => "BLOCK".to_string(),
-        Expr::Call(call) => {
-            let func = normalize_expr(&call.func);
-            format!("CALL({})", func)
-        }
-        Expr::MethodCall(mc) => {
-            format!("METHOD({})", mc.method)
-        }
-        Expr::Assign(_) => "ASSIGN".to_string(),
-        Expr::Binary(bin) => {
-            let op = match &bin.op {
-                syn::BinOp::Add(_) => "+",
-                syn::BinOp::Sub(_) => "-",
-                syn::BinOp::Mul(_) => "*",
-                syn::BinOp::Div(_) => "/",
-                syn::BinOp::And(_) => "&&",
-                syn::BinOp::Or(_) => "||",
-                syn::BinOp::Eq(_) => "==",
-                syn::BinOp::Ne(_) => "!=",
-                syn::BinOp::Lt(_) => "<",
-                syn::BinOp::Le(_) => "<=",
-                syn::BinOp::Gt(_) => ">",
-                syn::BinOp::Ge(_) => ">=",
-                _ => "OP",
-            };
-            format!("BIN({})", op)
-        }
-        Expr::Unary(un) => {
-            let op = match &un.op {
-                syn::UnOp::Not(_) => "!",
-                syn::UnOp::Neg(_) => "-",
-                _ => "~",
-            };
-            format!("UNARY({})", op)
-        }
-        Expr::Lit(_) => "LIT".to_string(),
-        Expr::Path(_) => "PATH".to_string(),
-        Expr::Closure(_) => "CLOSURE".to_string(),
-        Expr::Tuple(_) => "TUPLE".to_string(),
-        Expr::Array(_) => "ARRAY".to_string(),
-        Expr::Index(_) => "INDEX".to_string(),
-        Expr::Field(_) => "FIELD".to_string(),
+        Expr::If(_) => Some("IF"),
+        Expr::Match(_) => Some("MATCH"),
+        Expr::While(_) => Some("WHILE"),
+        Expr::ForLoop(_) => Some("FOR"),
+        Expr::Loop(_) => Some("LOOP"),
+        Expr::Return(_) => Some("RETURN"),
+        Expr::Break(_) => Some("BREAK"),
+        Expr::Continue(_) => Some("CONTINUE"),
+        Expr::Block(_) => Some("BLOCK"),
+        Expr::Assign(_) => Some("ASSIGN"),
+        Expr::Lit(_) => Some("LIT"),
+        Expr::Path(_) => Some("PATH"),
+        Expr::Closure(_) => Some("CLOSURE"),
+        Expr::Tuple(_) => Some("TUPLE"),
+        Expr::Array(_) => Some("ARRAY"),
+        Expr::Index(_) => Some("INDEX"),
+        Expr::Field(_) => Some("FIELD"),
+        _ => None,
+    }
+}
+
+/// Normalize complex expression variants that need sub-expression formatting.
+fn normalize_complex_expr(expr: &Expr) -> String {
+    match expr {
+        Expr::Call(call) => format!("CALL({})", normalize_expr(&call.func)),
+        Expr::MethodCall(mc) => format!("METHOD({})", mc.method),
+        Expr::Binary(bin) => format!("BIN({})", normalize_binop(&bin.op)),
+        Expr::Unary(un) => format!("UNARY({})", normalize_unop(&un.op)),
         _ => "EXPR".to_string(),
     }
 }
@@ -224,43 +263,57 @@ fn find_duplicates(skeletons: &[FunctionSkeleton], min_lines: usize) -> Vec<Dupl
     let mut used = vec![false; skeletons.len()];
 
     for i in 0..skeletons.len() {
-        if used[i] || skeletons[i].stmt_count < min_lines {
-            continue;
-        }
-
-        let mut group_instances = vec![DuplicateInstance {
-            file: skeletons[i].file.clone(),
-            function: skeletons[i].name.clone(),
-            line: skeletons[i].line,
-        }];
-
-        for j in (i + 1)..skeletons.len() {
-            if used[j] || skeletons[j].stmt_count < min_lines {
-                continue;
-            }
-
-            let similarity = pattern_similarity(&skeletons[i].pattern, &skeletons[j].pattern);
-            if similarity >= 0.7 {
-                group_instances.push(DuplicateInstance {
-                    file: skeletons[j].file.clone(),
-                    function: skeletons[j].name.clone(),
-                    line: skeletons[j].line,
-                });
-                used[j] = true;
-            }
-        }
-
-        if group_instances.len() > 1 {
-            used[i] = true;
-            groups.push(DuplicateGroup {
-                fingerprint: truncate(&skeletons[i].pattern, 60),
-                instances: group_instances,
-                similarity: 1.0, // All in group are similar
-            });
+        if let Some(group) = try_build_group(skeletons, &mut used, i, min_lines) {
+            groups.push(group);
         }
     }
 
     groups
+}
+
+/// Try to build a duplicate group anchored at index `i`.
+fn try_build_group(
+    skeletons: &[FunctionSkeleton],
+    used: &mut [bool],
+    i: usize,
+    min_lines: usize,
+) -> Option<DuplicateGroup> {
+    if used[i] || skeletons[i].stmt_count < min_lines {
+        return None;
+    }
+
+    let mut group_instances = vec![DuplicateInstance {
+        file: skeletons[i].file.clone(),
+        function: skeletons[i].name.clone(),
+        line: skeletons[i].line,
+    }];
+
+    for j in (i + 1)..skeletons.len() {
+        if used[j] || skeletons[j].stmt_count < min_lines {
+            continue;
+        }
+
+        let similarity = pattern_similarity(&skeletons[i].pattern, &skeletons[j].pattern);
+        if similarity >= 0.7 {
+            group_instances.push(DuplicateInstance {
+                file: skeletons[j].file.clone(),
+                function: skeletons[j].name.clone(),
+                line: skeletons[j].line,
+            });
+            used[j] = true;
+        }
+    }
+
+    if group_instances.len() > 1 {
+        used[i] = true;
+        Some(DuplicateGroup {
+            fingerprint: truncate(&skeletons[i].pattern, 60),
+            instances: group_instances,
+            similarity: 1.0, // All in group are similar
+        })
+    } else {
+        None
+    }
 }
 
 /// Calculate similarity between two patterns (0.0 to 1.0)

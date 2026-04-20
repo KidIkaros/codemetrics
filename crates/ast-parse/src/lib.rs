@@ -184,17 +184,26 @@ pub fn parse_lcov(lcov_path: &str) -> Result<Vec<FileCoverage>, String> {
     let mut current_file: Option<String> = None;
     let mut lines_found = 0u32;
     let mut lines_hit = 0u32;
+    // Track DA records as fallback when LF/LH are missing
+    let mut da_total = 0u32;
+    let mut da_hit = 0u32;
 
     for line in content.lines() {
         let line = line.trim();
 
         if let Some(path) = line.strip_prefix("SF:") {
-            // Start of file section
             current_file = Some(path.to_string());
             lines_found = 0;
             lines_hit = 0;
+            da_total = 0;
+            da_hit = 0;
         } else if line == "end_of_record" {
             if let Some(file) = current_file.take() {
+                // Use DA records as fallback when LF/LH are missing
+                if lines_found == 0 && da_total > 0 {
+                    lines_found = da_total;
+                    lines_hit = da_hit;
+                }
                 results.push(FileCoverage {
                     file,
                     lines_found,
@@ -205,6 +214,15 @@ pub fn parse_lcov(lcov_path: &str) -> Result<Vec<FileCoverage>, String> {
             lines_found = line[3..].parse().unwrap_or(0);
         } else if line.starts_with("LH:") {
             lines_hit = line[3..].parse().unwrap_or(0);
+        } else if line.starts_with("DA:") {
+            // DA:line_number,hit_count
+            da_total += 1;
+            if let Some(comma_pos) = line[3..].find(',') {
+                let hits: u32 = line[3 + comma_pos + 1..].parse().unwrap_or(0);
+                if hits > 0 {
+                    da_hit += 1;
+                }
+            }
         }
     }
 

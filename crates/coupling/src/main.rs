@@ -97,6 +97,30 @@ fn main() {
     }
 }
 
+/// Convert a file path to a module name relative to the base directory.
+fn module_name_from_path(path: &Path, base: &Path) -> Option<String> {
+    let rel = path.strip_prefix(base).ok()?;
+    let module_name = rel
+        .with_extension("")
+        .to_string_lossy()
+        .replace('/', "::")
+        .replace('\\', "::")
+        .replace("mod", "")
+        .trim_end_matches("::")
+        .to_string();
+    if module_name.is_empty() {
+        None
+    } else {
+        Some(module_name)
+    }
+}
+
+/// Returns true if a directory should be traversed (not a build/git/hidden dir).
+fn should_traverse_dir(path: &Path) -> bool {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    name != "target" && name != ".git" && !name.starts_with('.')
+}
+
 fn find_modules(dir: &Path, base: &Path, file_map: &mut HashMap<String, String>, module_map: &mut HashMap<String, String>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -106,32 +130,53 @@ fn find_modules(dir: &Path, base: &Path, file_map: &mut HashMap<String, String>,
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() && path.extension().map_or(false, |e| e == "rs") {
-            if let Ok(rel) = path.strip_prefix(base) {
-                let module_name = rel
-                    .with_extension("")
-                    .to_string_lossy()
-                    .replace('/', "::")
-                    .replace('\\', "::")
-                    .replace("mod", "")
-                    .trim_end_matches("::")
-                    .to_string();
-
-                if !module_name.is_empty() {
-                    file_map.insert(path.to_string_lossy().to_string(), module_name.clone());
-                    module_map.insert(module_name, path.to_string_lossy().to_string());
-                }
+            if let Some(module_name) = module_name_from_path(&path, base) {
+                file_map.insert(path.to_string_lossy().to_string(), module_name.clone());
+                module_map.insert(module_name, path.to_string_lossy().to_string());
             }
-        } else if path.is_dir() {
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            if name != "target" && name != ".git" && !name.starts_with('.') {
-                find_modules(&path, base, file_map, module_map);
-            }
+        } else if path.is_dir() && should_traverse_dir(&path) {
+            find_modules(&path, base, file_map, module_map);
         }
     }
 }
 
-fn find_workspace_crates(start_path: &str) -> HashSet<String> {
+/// Parse workspace member crate names from Cargo.toml content.
+fn parse_workspace_members(content: &str) -> HashSet<String> {
     let mut crates = HashSet::new();
+    if !content.contains("[workspace]") {
+        return crates;
+    }
+    let mut in_members = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("members") {
+            in_members = true;
+            continue;
+        }
+        if in_members {
+            if trimmed == "]" {
+                break;
+            }
+            if let Some(path_str) = trimmed
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"').or(Some(s)))
+            {
+                let path_str = path_str.trim_end_matches('"').trim_end_matches(',');
+                let crate_name = Path::new(path_str)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                if !crate_name.is_empty() {
+                    crates.insert(crate_name);
+                }
+            }
+        }
+    }
+    crates
+}
+
+fn find_workspace_crates(start_path: &str) -> HashSet<String> {
     let mut current = PathBuf::from(start_path);
 
     // Walk up to find workspace Cargo.toml
@@ -139,35 +184,9 @@ fn find_workspace_crates(start_path: &str) -> HashSet<String> {
         let cargo_toml = current.join("Cargo.toml");
         if cargo_toml.exists() {
             if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-                // Check if this is a workspace
-                if content.contains("[workspace]") {
-                    // Parse workspace members
-                    let mut in_members = false;
-                    for line in content.lines() {
-                        let trimmed = line.trim();
-                        if trimmed.starts_with("members") {
-                            in_members = true;
-                            continue;
-                        }
-                        if in_members {
-                            if trimmed == "]" {
-                                break;
-                            }
-                            // Extract crate name from path like "crates/ast-parse"
-                            if let Some(path_str) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"').or(Some(s))) {
-                                let path_str = path_str.trim_end_matches('"').trim_end_matches(',');
-                                let crate_name = Path::new(path_str)
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .to_string();
-                                if !crate_name.is_empty() {
-                                    crates.insert(crate_name);
-                                }
-                            }
-                        }
-                    }
-                    break;
+                let crates = parse_workspace_members(&content);
+                if !crates.is_empty() {
+                    return crates;
                 }
             }
         }
@@ -176,10 +195,27 @@ fn find_workspace_crates(start_path: &str) -> HashSet<String> {
         }
     }
 
-    crates
+    HashSet::new()
 }
 
-fn extract_imports(source: &str, current_module: &str, internal_crates: &HashSet<String>) -> HashSet<String> {
+/// Attempt to extract a cross-crate import from a `use` path.
+/// Returns `Some("crate::<name>")` for external crate imports, or `None`.
+fn extract_cross_crate_import(use_path: &str) -> Option<String> {
+    let first_segment = use_path.split("::").next().unwrap_or("");
+    if !first_segment.is_empty()
+        && !first_segment.starts_with("std")
+        && !first_segment.starts_with("core")
+        && !first_segment.starts_with("alloc")
+        && first_segment != "self"
+        && first_segment != "super"
+    {
+        Some(format!("crate::{}", first_segment))
+    } else {
+        None
+    }
+}
+
+fn extract_imports(source: &str, current_module: &str, _internal_crates: &HashSet<String>) -> HashSet<String> {
     let mut imports = HashSet::new();
     let crate_prefix = current_module.split("::").next().unwrap_or(current_module);
 
@@ -191,7 +227,6 @@ fn extract_imports(source: &str, current_module: &str, internal_crates: &HashSet
             let use_path = use_path.trim_end_matches(';').trim();
 
             if use_path.starts_with("crate::") {
-                // Convert to module name
                 let module = use_path
                     .strip_prefix("crate::")
                     .unwrap_or(use_path)
@@ -201,22 +236,8 @@ fn extract_imports(source: &str, current_module: &str, internal_crates: &HashSet
                 if module != crate_prefix {
                     imports.insert(format!("{}::{}", crate_prefix, module));
                 }
-            } else {
-                // Match cross-crate imports: `use <crate_name>::`
-                // Extract the first segment as potential crate name
-                let first_segment = use_path.split("::").next().unwrap_or("");
-                // Skip std library, common keywords, and relative imports
-                if !first_segment.is_empty()
-                    && !first_segment.starts_with("std")
-                    && !first_segment.starts_with("core")
-                    && !first_segment.starts_with("alloc")
-                    && first_segment != "self"
-                    && first_segment != "super"
-                {
-                    // This is a cross-crate import - add as external dependency
-                    // Format: "crate::<crate_name>" to distinguish from internal modules
-                    imports.insert(format!("crate::{}", first_segment));
-                }
+            } else if let Some(dep) = extract_cross_crate_import(use_path) {
+                imports.insert(dep);
             }
         }
 
