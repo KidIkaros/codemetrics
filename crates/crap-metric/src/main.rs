@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use ast_parse::{analyze_file, crap_category, crap_score, find_coverage, parse_lcov, FileCoverage, FunctionComplexity};
-use quality_common::{find_rust_files, truncate};
+use quality_common::{find_rust_files, Column, print_table_header, print_table_row};
 
 #[derive(Parser)]
 #[command(name = "crap", about = "CRAP metric calculator — maintenance risk scoring")]
@@ -143,11 +143,16 @@ fn output_table(reports: &[FunctionReport]) {
         return;
     }
 
-    println!(
-        "{:<30} {:<40} {:>4} {:>4} {:>10} {:>10} {:<12}",
-        "FUNCTION", "FILE", "LINE", "COMP", "LINES", "CRAP", "CATEGORY"
-    );
-    println!("{}", "─".repeat(112));
+    let columns = [
+        Column::left("FUNCTION", 30),
+        Column::left("FILE", 40),
+        Column::right("LINE", 4),
+        Column::right("COMP", 4),
+        Column::right("LINES", 10),
+        Column::right("CRAP", 10),
+        Column::left("CATEGORY", 12),
+    ];
+    print_table_header(&columns);
 
     let mut excellent = 0;
     let mut good = 0;
@@ -163,38 +168,35 @@ fn output_table(reports: &[FunctionReport]) {
             _ => "?"
         };
 
-        // Color the CRAP score
-        let score_str = if r.crap_score > 30.0 {
-            format!("{:.1}", r.crap_score)
-        } else {
-            format!("{:.1}", r.crap_score)
-        };
-
-        println!(
-            "{:<30} {:<40} {:>4} {:>4} {:>10} {:>10} {} {:<10}",
-            truncate(&r.name, 28),
-            truncate(&r.file, 38),
-            r.line,
-            r.complexity,
-            r.line_count,
-            score_str,
-            cat_icon,
-            r.category,
-        );
+        let line_str = r.line.to_string();
+        let comp_str = r.complexity.to_string();
+        let lc_str = r.line_count.to_string();
+        let score_str = format!("{:.1}", r.crap_score);
+        let cat_str = format!("{} {}", cat_icon, r.category);
+        print_table_row(&columns, &[
+            &r.name,
+            &r.file,
+            &line_str,
+            &comp_str,
+            &lc_str,
+            &score_str,
+            &cat_str,
+        ]);
     }
 
-    println!("{}", "─".repeat(112));
-
+    // Summary
     let total = reports.len();
     let total_comp: u32 = reports.iter().map(|r| r.complexity).sum();
     let total_crap: f64 = reports.iter().map(|r| r.crap_score).sum();
 
-    println!();
-    println!("SUMMARY");
-    println!("  Functions analyzed: {}", total);
-    println!("  Total complexity:   {}", total_comp);
-    println!("  Avg complexity:     {:.1}", total_comp as f64 / total as f64);
-    println!("  Avg CRAP score:     {:.1}", total_crap / total as f64);
+    let summary = vec![
+        ("Functions analyzed:", total.to_string()),
+        ("Total complexity:", total_comp.to_string()),
+        ("Avg complexity:", format!("{:.1}", total_comp as f64 / total as f64)),
+        ("Avg CRAP score:", format!("{:.1}", total_crap / total as f64)),
+    ];
+    quality_common::print_summary(&summary);
+
     println!();
     println!("  {} excellent (≤10)  {} good (≤20)  {} acceptable (≤30)  {} crappy (>30)",
         excellent, good, acceptable, crappy);

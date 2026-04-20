@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use ast_parse::analyze_file;
-use quality_common::{get_git_churn, truncate};
+use quality_common::{get_git_churn, Column, print_table_header, print_table_row, separator};
 
 #[derive(Parser)]
 #[command(name = "riskmap", about = "Risk map -- cross-reference git churn with code complexity to find danger zones")]
@@ -59,85 +59,23 @@ struct RiskSummary {
 
 fn main() {
     let cli = Cli::parse();
-
-    let repo_root = Path::new(&cli.path);
-
-    // Step 1: Get git churn data
-    let churn_data = get_git_churn(repo_root, &cli.since);
-    if churn_data.is_empty() {
-        eprintln!("No git churn data found. Is this a git repository?");
+    if let Err(e) = run(cli) {
+        eprintln!("{}", e);
         std::process::exit(1);
     }
+}
 
-    // Step 2: Get complexity data for each file
-    let mut file_risks = Vec::new();
+fn run(cli: Cli) -> Result<(), String> {
+    let repo_root = Path::new(&cli.path);
 
-    for (file_path, churn_count) in &churn_data {
-        let full_path = repo_root.join(file_path);
-        if !full_path.exists() || full_path.extension().map_or(true, |e| e != "rs") {
-            continue;
-        }
-
-        let full_path_str = full_path.to_string_lossy().to_string();
-        match analyze_file(&full_path_str) {
-            Ok(analysis) => {
-                let total_complexity: u32 = analysis.functions.iter().map(|f| f.complexity).sum();
-                let function_count = analysis.functions.len() as u32;
-
-                // Hot functions: top 3 most complex
-                let mut funcs = analysis.functions.clone();
-                funcs.sort_by(|a, b| b.complexity.cmp(&a.complexity));
-                let hot_functions: Vec<String> = funcs
-                    .iter()
-                    .take(3)
-                    .filter(|f| f.complexity > 3)
-                    .map(|f| format!("{} (c:{})", f.name, f.complexity))
-                    .collect();
-
-                // Risk score: normalized churn * complexity
-                // We use a simple formula: min(100, churn * complexity / 10)
-                let raw_risk = (*churn_count as f64 * total_complexity as f64) / 10.0;
-                let risk_score = (raw_risk as u32).min(100);
-
-                let category = if risk_score >= 70 {
-                    "DANGER".to_string()
-                } else if risk_score >= 40 {
-                    "HIGH".to_string()
-                } else if risk_score >= 20 {
-                    "MEDIUM".to_string()
-                } else {
-                    "LOW".to_string()
-                };
-
-                file_risks.push(FileRisk {
-                    file: file_path.clone(),
-                    churn: *churn_count,
-                    complexity: total_complexity,
-                    function_count,
-                    risk_score,
-                    category,
-                    hot_functions,
-                });
-            }
-            Err(_) => {
-                // Non-Rust or parse error, just report churn
-                file_risks.push(FileRisk {
-                    file: file_path.clone(),
-                    churn: *churn_count,
-                    complexity: 0,
-                    function_count: 0,
-                    risk_score: (*churn_count).min(100) / 5,
-                    category: "CHURN_ONLY".to_string(),
-                    hot_functions: vec![],
-                });
-            }
-        }
+    let churn_data = get_git_churn(repo_root, &cli.since);
+    if churn_data.is_empty() {
+        return Err("No git churn data found. Is this a git repository?".to_string());
     }
 
-    // Sort by risk score descending
+    let mut file_risks = build_file_risks(repo_root, &churn_data);
     file_risks.sort_by(|a, b| b.risk_score.cmp(&a.risk_score));
 
-    // Filter
     if cli.min_risk > 0 {
         file_risks.retain(|f| f.risk_score >= cli.min_risk);
     }
@@ -145,6 +83,81 @@ fn main() {
     match cli.format.as_str() {
         "json" => output_json(&file_risks),
         _ => output_table(&file_risks),
+    }
+
+    Ok(())
+}
+
+fn build_file_risks(repo_root: &Path, churn_data: &HashMap<String, u32>) -> Vec<FileRisk> {
+    let mut file_risks = Vec::new();
+    for (file_path, churn_count) in churn_data {
+        let full_path = repo_root.join(file_path);
+        if !full_path.exists() || full_path.extension().map_or(true, |e| e != "rs") {
+            continue;
+        }
+        let full_path_str = full_path.to_string_lossy().to_string();
+        match analyze_file(&full_path_str) {
+            Ok(analysis) => {
+                file_risks.push(build_risk_from_analysis(file_path, *churn_count, &analysis));
+            }
+            Err(_) => {
+                file_risks.push(build_churn_only_risk(file_path, *churn_count));
+            }
+        }
+    }
+    file_risks
+}
+
+fn build_risk_from_analysis(file_path: &str, churn: u32, analysis: &ast_parse::FileAnalysis) -> FileRisk {
+    let total_complexity: u32 = analysis.functions.iter().map(|f| f.complexity).sum();
+    let function_count = analysis.functions.len() as u32;
+
+    let mut funcs = analysis.functions.clone();
+    funcs.sort_by(|a, b| b.complexity.cmp(&a.complexity));
+    let hot_functions: Vec<String> = funcs
+        .iter()
+        .take(3)
+        .filter(|f| f.complexity > 3)
+        .map(|f| format!("{} (c:{})", f.name, f.complexity))
+        .collect();
+
+    let raw_risk = (churn as f64 * total_complexity as f64) / 10.0;
+    let risk_score = (raw_risk as u32).min(100);
+
+    let category = risk_category(risk_score);
+
+    FileRisk {
+        file: file_path.to_string(),
+        churn,
+        complexity: total_complexity,
+        function_count,
+        risk_score,
+        category,
+        hot_functions,
+    }
+}
+
+fn build_churn_only_risk(file_path: &str, churn: u32) -> FileRisk {
+    FileRisk {
+        file: file_path.to_string(),
+        churn,
+        complexity: 0,
+        function_count: 0,
+        risk_score: churn.min(100) / 5,
+        category: "CHURN_ONLY".to_string(),
+        hot_functions: vec![],
+    }
+}
+
+fn risk_category(risk_score: u32) -> String {
+    if risk_score >= 70 {
+        "DANGER".to_string()
+    } else if risk_score >= 40 {
+        "HIGH".to_string()
+    } else if risk_score >= 20 {
+        "MEDIUM".to_string()
+    } else {
+        "LOW".to_string()
     }
 }
 
@@ -164,21 +177,26 @@ fn output_table(file_risks: &[FileRisk]) {
         .filter(|f| f.churn > 5 && f.complexity > 20)
         .collect();
 
-    println!("RISK MAP: CHURN × COMPLEXITY");
-    println!("{}", "─".repeat(95));
-    println!(
-        "\n{:<45} {:>6} {:>6} {:>5} {:<8} {}",
-        "FILE", "CHURN", "COMP", "RISK", "STATUS", "HOT FUNCTIONS"
-    );
-    println!("{}", "─".repeat(95));
+    println!("RISK MAP: CHURN x COMPLEXITY");
+    println!("{}", separator(95));
+
+    let columns = [
+        Column::left("FILE", 45),
+        Column::right("CHURN", 6),
+        Column::right("COMP", 6),
+        Column::right("RISK", 5),
+        Column::left("STATUS", 8),
+        Column::left("HOT FUNCTIONS", 25),
+    ];
+    print_table_header(&columns);
 
     for f in file_risks.iter().take(30) {
         let icon = match f.category.as_str() {
-            "DANGER" => "🔴",
-            "HIGH" => "🟠",
-            "MEDIUM" => "🟡",
-            "LOW" => "🟢",
-            _ => "⚪",
+            "DANGER" => "*",
+            "HIGH" => "!",
+            "MEDIUM" => "~",
+            "LOW" => ".",
+            _ => "?",
         };
 
         let hot = if f.hot_functions.is_empty() {
@@ -187,33 +205,35 @@ fn output_table(file_risks: &[FileRisk]) {
             f.hot_functions[0].clone()
         };
 
-        println!(
-            "{:<45} {:>6} {:>6} {:>5} {} {:<6} {}",
-            truncate(&f.file, 43),
-            f.churn,
-            f.complexity,
-            f.risk_score,
-            icon,
-            f.category,
-            truncate(&hot, 35),
-        );
+        let churn_str = f.churn.to_string();
+        let comp_str = f.complexity.to_string();
+        let risk_str = f.risk_score.to_string();
+        let status_str = format!("{} {}", icon, f.category);
+        print_table_row(&columns, &[
+            &f.file,
+            &churn_str,
+            &comp_str,
+            &risk_str,
+            &status_str,
+            &hot,
+        ]);
     }
 
-    println!("{}", "─".repeat(95));
+    println!("{}", separator(95));
     println!();
     println!("RISK SUMMARY");
     println!("  Files analyzed:    {}", file_risks.len());
-    println!("  🔴 DANGER/HIGH:    {} (changing often AND complex)", high);
-    println!("  🟡 MEDIUM:         {}", medium);
-    println!("  🟢 LOW:            {}", low);
+    println!("  ! DANGER/HIGH:     {} (changing often AND complex)", high);
+    println!("  ~ MEDIUM:          {}", medium);
+    println!("  . LOW:             {}", low);
 
     if !danger_zone.is_empty() {
         println!();
-        println!("  ⚠ DANGER ZONE (high churn + high complexity):");
+        println!("  DANGER ZONE (high churn + high complexity):");
         for f in danger_zone.iter().take(5) {
             println!("    {} (churn: {}, complexity: {})", f.file, f.churn, f.complexity);
             for hf in &f.hot_functions {
-                println!("      └─ {}", hf);
+                println!("      |- {}", hf);
             }
         }
         println!();
@@ -221,7 +241,7 @@ fn output_table(file_risks: &[FileRisk]) {
         println!("  They're the most likely source of bugs. Consider refactoring.");
     } else {
         println!();
-        println!("  ✓ No danger zone detected. Complex files aren't changing much.");
+        println!("  No danger zone detected. Complex files aren't changing much.");
     }
 }
 

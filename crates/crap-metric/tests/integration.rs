@@ -16,7 +16,7 @@ fn test_basic_analysis() {
         .assert()
         .success()
         .stdout(predicate::str::contains("FUNCTION"))
-        .stdout(predicate::str::contains("SUMMARY"));
+        .stdout(predicate::str::contains("Functions analyzed"));
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn test_with_coverage() {
         .arg(lcov_path)
         .assert()
         .success()
-        .stdout(predicate::str::contains("SUMMARY"));
+        .stdout(predicate::str::contains("Functions analyzed"));
 
     std::fs::remove_file(lcov_path).ok();
 }
@@ -90,4 +90,83 @@ fn test_categories_displayed() {
         .success()
         .stdout(predicate::str::contains("excellent"))
         .stdout(predicate::str::contains("good"));
+}
+
+#[test]
+fn test_output_columns_all_present() {
+    // Verify all expected column headers appear in the table output
+    let src = format!("{}/src", TEST_PROJECT);
+    let output = crap_cmd()
+        .arg(&src)
+        .arg("--recursive")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("FUNCTION"), "Missing FUNCTION column");
+    assert!(stdout.contains("FILE"), "Missing FILE column");
+    assert!(stdout.contains("LINE"), "Missing LINE column");
+    assert!(stdout.contains("COMP"), "Missing COMP (complexity) column");
+    assert!(stdout.contains("LINES"), "Missing LINES column");
+    assert!(stdout.contains("CRAP"), "Missing CRAP column");
+    assert!(stdout.contains("CATEGORY"), "Missing CATEGORY column");
+}
+
+#[test]
+fn test_category_icons_in_output() {
+    // Verify category icons (checkmark, circle, triangle, cross) appear for different categories
+    let src = format!("{}/src", TEST_PROJECT);
+    let output = crap_cmd()
+        .arg(&src)
+        .arg("--recursive")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // At least one category icon should be present
+    let has_excellent_icon = stdout.contains("\u{2713} excellent"); // ✓ excellent
+    let has_good_icon = stdout.contains("\u{25CB} good");          // ○ good
+    let has_acceptable_icon = stdout.contains("\u{25B3} acceptable"); // △ acceptable
+    let has_crappy_icon = stdout.contains("\u{2717} crappy");      // ✗ crappy
+
+    // At least one category type should be shown with its icon
+    assert!(
+        has_excellent_icon || has_good_icon || has_acceptable_icon || has_crappy_icon,
+        "No category icons found in output"
+    );
+}
+
+#[test]
+fn test_summary_fields() {
+    // Verify the summary section contains all expected fields
+    let src = format!("{}/src", TEST_PROJECT);
+    let output = crap_cmd()
+        .arg(&src)
+        .arg("--recursive")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("Functions analyzed"), "Missing 'Functions analyzed' in summary");
+    assert!(stdout.contains("Total complexity"), "Missing 'Total complexity' in summary");
+    assert!(stdout.contains("Avg complexity"), "Missing 'Avg complexity' in summary");
+    assert!(stdout.contains("Avg CRAP score"), "Missing 'Avg CRAP score' in summary");
+}
+
+#[test]
+fn test_category_breakdown_counts() {
+    // Verify the summary shows counts for each category
+    let src = format!("{}/src", TEST_PROJECT);
+    let output = crap_cmd()
+        .arg(&src)
+        .arg("--recursive")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The category breakdown line shows counts
+    assert!(stdout.contains("excellent"), "Missing 'excellent' in category breakdown");
+    assert!(stdout.contains("good"), "Missing 'good' in category breakdown");
+    assert!(stdout.contains("acceptable"), "Missing 'acceptable' in category breakdown");
+    assert!(stdout.contains("crappy"), "Missing 'crappy' in category breakdown");
 }

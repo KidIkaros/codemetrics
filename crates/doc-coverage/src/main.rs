@@ -5,7 +5,7 @@ use syn::{
     ImplItemFn, ItemEnum, ItemFn, ItemStruct, ItemTrait, Visibility,
 };
 
-use quality_common::find_rust_files;
+use quality_common::{find_rust_files, Column, print_table_header, print_table_row, separator};
 
 #[derive(Parser)]
 #[command(name = "doccov", about = "Documentation coverage -- measure public API doc comment percentage")]
@@ -260,7 +260,7 @@ fn output_table(items: &[DocItem]) -> f64 {
     let undocumented: Vec<_> = public_items.iter().filter(|i| !i.documented).collect();
 
     println!("DOCUMENTATION COVERAGE");
-    println!("{}", "─".repeat(70));
+    println!("{}", separator(70));
     println!();
     println!("  Public items:     {}", total);
     println!("  Documented:       {} ({:.0}%)", documented, coverage);
@@ -276,9 +276,19 @@ fn output_table(items: &[DocItem]) -> f64 {
     if !undocumented.is_empty() {
         println!();
         println!("  UNDOCUMENTED PUBLIC ITEMS:");
-        println!("{}", "─".repeat(70));
+
+        let columns = [
+            Column::left("KIND", 10),
+            Column::left("NAME", 30),
+            Column::left("FILE", 30),
+            Column::right("LINE", 5),
+        ];
+        print_table_header(&columns);
+
         for item in undocumented.iter().take(20) {
-            println!("    {} {} ({}:{})", icon(&item.kind), item.name, item.file, item.line);
+            let kind_str = format!("{} {}", icon(&item.kind), item.kind);
+            let line_str = item.line.to_string();
+            print_table_row(&columns, &[&kind_str, &item.name, &item.file, &line_str]);
         }
         if undocumented.len() > 20 {
             println!("    ... and {} more", undocumented.len() - 20);
@@ -295,7 +305,7 @@ fn output_table(items: &[DocItem]) -> f64 {
     } else {
         "Poor"
     };
-    println!("  Coverage: {:.0}% — {}", coverage, verdict);
+    println!("  Coverage: {:.0}% -- {}", coverage, verdict);
 
     coverage
 }

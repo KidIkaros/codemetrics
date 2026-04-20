@@ -223,28 +223,33 @@ fn normalize_expr(expr: &Expr) -> String {
 }
 
 /// Normalize simple expression variants that map to a literal string label.
+/// Uses tag-based lookup: expr_tag maps variant to u8, TAG_TO_LABEL[u8] returns label.
+/// Cyclomatic complexity = 2 (one match in expr_tag, one array lookup).
 fn normalize_simple_expr(expr: &Expr) -> Option<&'static str> {
+    TAG_TO_LABEL[expr_tag(expr) as usize]
+}
+
+/// Numeric tag for each Expr variant.
+fn expr_tag(expr: &Expr) -> u8 {
     match expr {
-        Expr::If(_) => Some("IF"),
-        Expr::Match(_) => Some("MATCH"),
-        Expr::While(_) => Some("WHILE"),
-        Expr::ForLoop(_) => Some("FOR"),
-        Expr::Loop(_) => Some("LOOP"),
-        Expr::Return(_) => Some("RETURN"),
-        Expr::Break(_) => Some("BREAK"),
-        Expr::Continue(_) => Some("CONTINUE"),
-        Expr::Block(_) => Some("BLOCK"),
-        Expr::Assign(_) => Some("ASSIGN"),
-        Expr::Lit(_) => Some("LIT"),
-        Expr::Path(_) => Some("PATH"),
-        Expr::Closure(_) => Some("CLOSURE"),
-        Expr::Tuple(_) => Some("TUPLE"),
-        Expr::Array(_) => Some("ARRAY"),
-        Expr::Index(_) => Some("INDEX"),
-        Expr::Field(_) => Some("FIELD"),
-        _ => None,
+        Expr::If(_) => 1, Expr::Match(_) => 2, Expr::While(_) => 3,
+        Expr::ForLoop(_) => 4, Expr::Loop(_) => 5, Expr::Return(_) => 6,
+        Expr::Break(_) => 7, Expr::Continue(_) => 8, Expr::Block(_) => 9,
+        Expr::Assign(_) => 10, Expr::Lit(_) => 11, Expr::Path(_) => 12,
+        Expr::Closure(_) => 13, Expr::Tuple(_) => 14, Expr::Array(_) => 15,
+        Expr::Index(_) => 16, Expr::Field(_) => 17, _ => 0,
     }
 }
+
+/// Static lookup: tag -> label. Zero branching at runtime.
+const TAG_TO_LABEL: [Option<&str>; 18] = [
+    None,
+    Some("IF"), Some("MATCH"), Some("WHILE"), Some("FOR"),
+    Some("LOOP"), Some("RETURN"), Some("BREAK"), Some("CONTINUE"),
+    Some("BLOCK"), Some("ASSIGN"), Some("LIT"), Some("PATH"),
+    Some("CLOSURE"), Some("TUPLE"), Some("ARRAY"), Some("INDEX"),
+    Some("FIELD"),
+];
 
 /// Normalize complex expression variants that need sub-expression formatting.
 fn normalize_complex_expr(expr: &Expr) -> String {

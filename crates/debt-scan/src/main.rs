@@ -1,9 +1,8 @@
 use clap::Parser;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::Path;
 
-use quality_common::{find_source_files, get_git_blame, truncate};
+use quality_common::{find_source_files, get_git_blame, Column, print_table_header, print_table_row};
 
 #[derive(Parser)]
 #[command(name = "debt", about = "Technical debt scanner -- track TODO/FIXME/HACK/XXX markers")]
@@ -66,84 +65,90 @@ const MARKERS: &[(&str, &str)] = &[
 
 fn main() {
     let cli = Cli::parse();
+    if let Err(e) = run(cli) {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    }
+}
 
+fn run(cli: Cli) -> Result<(), String> {
     let extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "rb", "php"];
     let files = find_source_files(&cli.path, cli.recursive, &extensions);
     if files.is_empty() {
-        eprintln!("No source files found at {}", cli.path);
-        std::process::exit(1);
+        return Err(format!("No source files found at {}", cli.path));
     }
 
-    let marker_filter: Option<Vec<String>> = cli.marker.as_ref().map(|m| {
-        m.split(',').map(|s| s.trim().to_lowercase()).collect()
+    let marker_filter = cli.marker.as_ref().map(|m| {
+        m.split(',').map(|s| s.trim().to_lowercase()).collect::<Vec<_>>()
     });
 
-    let mut items = Vec::new();
-
-    for file_path in &files {
-        let source = match std::fs::read_to_string(file_path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        for (line_num, line) in source.lines().enumerate() {
-            let trimmed = line.trim();
-
-            for (marker_name, marker_type) in MARKERS {
-                // Match "TODO:", "TODO(", "FIXME:", "HACK:", etc.
-                let patterns = [
-                    format!("{}:", marker_name),
-                    format!("{}(", marker_name),
-                    format!("{} ", marker_name),
-                ];
-
-                for pattern in &patterns {
-                    if trimmed.contains(pattern) {
-                        // Skip markers that appear inside string literals
-                        if is_marker_in_string(trimmed, marker_name) {
-                            continue;
-                        }
-
-                        // Filter out if not requested
-                        if let Some(ref filter) = marker_filter {
-                            if !filter.contains(&marker_type.to_string()) {
-                                continue;
-                            }
-                        }
-
-                        // Extract the comment text after the marker
-                        let text = extract_comment_text(line, marker_name);
-
-                        // Try to get git blame info
-                        let (author, date) = get_git_blame(file_path, line_num + 1);
-
-                        items.push(DebtItem {
-                            file: file_path.clone(),
-                            line: line_num + 1,
-                            marker_type: marker_type.to_string(),
-                            text,
-                            author,
-                            date,
-                        });
-                        break; // Only one marker per line
-                    }
-                }
-            }
-        }
-    }
-
-    // Sort
-    match cli.sort.as_str() {
-        "file" => items.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line))),
-        "type" => items.sort_by(|a, b| a.marker_type.cmp(&b.marker_type)),
-        "author" => items.sort_by(|a, b| a.author.cmp(&b.author)),
-        _ => {} // age = git blame date order, already chronological if git available
-    }
+    let items = scan_files(&files, &marker_filter);
+    let items = sort_items(items, &cli.sort);
 
     match cli.format.as_str() {
         "json" => output_json(&items),
         _ => output_table(&items),
     }
+
+    Ok(())
+}
+
+fn scan_files(files: &[String], marker_filter: &Option<Vec<String>>) -> Vec<DebtItem> {
+    let mut items = Vec::new();
+    for file_path in files {
+        let Ok(source) = std::fs::read_to_string(file_path) else { continue };
+        scan_source(file_path, &source, marker_filter, &mut items);
+    }
+    items
+}
+
+fn scan_source(file_path: &str, source: &str, marker_filter: &Option<Vec<String>>, items: &mut Vec<DebtItem>) {
+    for (line_num, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        for (marker_name, marker_type) in MARKERS {
+            if !has_marker(trimmed, marker_name) { continue; }
+            if is_marker_in_string(trimmed, marker_name) { continue; }
+            if is_filtered_out(marker_filter, marker_type) { continue; }
+
+            let text = extract_comment_text(line, marker_name);
+            let (author, date) = get_git_blame(file_path, line_num + 1);
+            items.push(DebtItem {
+                file: file_path.to_string(),
+                line: line_num + 1,
+                marker_type: marker_type.to_string(),
+                text,
+                author,
+                date,
+            });
+            break;
+        }
+    }
+}
+
+fn has_marker(trimmed: &str, marker_name: &str) -> bool {
+    let patterns = [
+        format!("{}:", marker_name),
+        format!("{}(", marker_name),
+        format!("{} ", marker_name),
+    ];
+    patterns.iter().any(|p| trimmed.contains(p))
+}
+
+fn is_filtered_out(marker_filter: &Option<Vec<String>>, marker_type: &str) -> bool {
+    match marker_filter {
+        Some(filter) => !filter.contains(&marker_type.to_string()),
+        None => false,
+    }
+}
+
+fn sort_items(mut items: Vec<DebtItem>, sort: &str) -> Vec<DebtItem> {
+    match sort {
+        "file" => items.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line))),
+        "type" => items.sort_by(|a, b| a.marker_type.cmp(&b.marker_type)),
+        "author" => items.sort_by(|a, b| a.author.cmp(&b.author)),
+        _ => {}
+    }
+    items
 }
 
 fn is_marker_in_string(line: &str, marker: &str) -> bool {
@@ -196,11 +201,14 @@ fn output_table(items: &[DebtItem]) {
         return;
     }
 
-    println!(
-        "{:<8} {:<50} {:>4} {:<15} {}",
-        "TYPE", "FILE", "LINE", "AUTHOR", "TEXT"
-    );
-    println!("{}", "─".repeat(110));
+    let columns = [
+        Column::left("TYPE", 8),
+        Column::left("FILE", 50),
+        Column::right("LINE", 4),
+        Column::left("AUTHOR", 15),
+        Column::left("TEXT", 30),
+    ];
+    print_table_header(&columns);
 
     let mut todo = 0;
     let mut fixme = 0;
@@ -220,24 +228,26 @@ fn output_table(items: &[DebtItem]) {
         let author = item.author.as_deref().unwrap_or("unknown");
         *by_author.entry(author.to_string()).or_insert(0) += 1;
 
-        println!(
-            "{} {:<6} {:<50} {:>4} {:<15} {}",
-            icon,
-            item.marker_type.to_uppercase(),
-            truncate(&item.file, 48),
-            item.line,
-            truncate(author, 13),
-            truncate(&item.text, 60),
-        );
+        let line_str = item.line.to_string();
+        let type_str = format!("{} {}", icon, item.marker_type.to_uppercase());
+        print_table_row(&columns, &[
+            &type_str,
+            &item.file,
+            &line_str,
+            author,
+            &item.text,
+        ]);
     }
 
-    println!("{}", "─".repeat(110));
-    println!();
-    println!("TECHNICAL DEBT SUMMARY");
-    println!("  Total markers:  {}", items.len());
-    println!("  TODO:           {} (can wait)", todo);
-    println!("  FIXME:          {} (should fix)", fixme);
-    println!("  HACK:           {} (needs refactor)", hack);
+    // Print summary
+    let summary = vec![
+        ("Total markers:", items.len().to_string()),
+        ("TODO:", format!("{} (can wait)", todo)),
+        ("FIXME:", format!("{} (should fix)", fixme)),
+        ("HACK:", format!("{} (needs refactor)", hack)),
+    ];
+    quality_common::print_summary(&summary);
+
     if xxx > 0 {
         println!("  XXX:            {} (DANGER)", xxx);
     }

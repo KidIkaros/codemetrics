@@ -73,11 +73,18 @@ pub fn scan_dir(dir: &Path, recursive: bool, extensions: &[&str], files: &mut Ve
 // ═══════════════════════════════════════════
 
 /// Truncate a string to max length, adding "…" if truncated.
+/// Keeps the RIGHT side (end) of the string.
 pub fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else if max > 1 {
-        format!("…{}", &s[s.len() - max + 1..])
+        // Keep the last max-1 chars, find valid char boundary from the right
+        let start = s.len() - (max - 1);
+        let mut start = start;
+        while start > 0 && !s.is_char_boundary(start) {
+            start -= 1;
+        }
+        format!("…{}", &s[start..])
     } else {
         "…".to_string()
     }
@@ -127,6 +134,72 @@ pub fn section_header(title: &str) {
     println!();
     println!("{}", title);
     println!("{}", separator(title.len().max(40)));
+}
+
+// ═══════════════════════════════════════════
+// TABLE FORMATTING
+// ═══════════════════════════════════════════
+
+/// A column in a table output.
+pub struct Column {
+    pub header: &'static str,
+    pub width: usize,
+    pub align_right: bool,
+}
+
+impl Column {
+    pub fn left(header: &'static str, width: usize) -> Self {
+        Self { header, width, align_right: false }
+    }
+    pub fn right(header: &'static str, width: usize) -> Self {
+        Self { header, width, align_right: true }
+    }
+}
+
+/// Print a table header row.
+pub fn print_table_header(columns: &[Column]) {
+    let mut line = String::new();
+    for col in columns {
+        if col.align_right {
+            line.push_str(&format!("{:>width$} ", col.header, width = col.width));
+        } else {
+            line.push_str(&format!("{:<width$} ", col.header, width = col.width));
+        }
+    }
+    println!("{}", line.trim_end());
+    let total_width: usize = columns.iter().map(|c| c.width + 1).sum();
+    println!("{}", separator(total_width));
+}
+
+/// Print a table row with values.
+pub fn print_table_row(columns: &[Column], values: &[&str]) {
+    let mut line = String::new();
+    for (col, val) in columns.iter().zip(values.iter()) {
+        let truncated = truncate(val, col.width);
+        if col.align_right {
+            line.push_str(&format!("{:>width$} ", truncated, width = col.width));
+        } else {
+            line.push_str(&format!("{:<width$} ", truncated, width = col.width));
+        }
+    }
+    println!("{}", line.trim_end());
+}
+
+/// Print a summary section with key-value pairs.
+pub fn print_summary(items: &[(&str, String)]) {
+    println!();
+    for (key, value) in items {
+        println!("  {:<25} {}", key, value);
+    }
+}
+
+/// Print a verdict line with icon.
+pub fn print_verdict(score: f64, good_threshold: f64, label_good: &str, label_bad: &str) {
+    if score <= good_threshold {
+        println!("\n  {} {:.1} — {}", "✓", score, label_good);
+    } else {
+        println!("\n  {} {:.1} — {}", "✗", score, label_bad);
+    }
 }
 
 // ═══════════════════════════════════════════

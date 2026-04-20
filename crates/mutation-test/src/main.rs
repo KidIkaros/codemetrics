@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ast_parse::analyze_source;
+use quality_common::{Column, print_table_header, print_table_row, separator};
 
 #[derive(Parser)]
 #[command(name = "mutate", about = "Mutation testing — evaluate test suite quality by introducing deliberate code changes")]
@@ -72,68 +73,87 @@ struct MutationSummary {
 
 fn main() {
     let cli = Cli::parse();
+    if let Err(e) = run(cli) {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    }
+}
 
+fn run(cli: Cli) -> Result<(), String> {
     let crate_root = Path::new(&cli.path);
     if !crate_root.join("Cargo.toml").exists() {
-        eprintln!("Error: No Cargo.toml found at {}", cli.path);
-        std::process::exit(1);
+        return Err(format!("No Cargo.toml found at {}", cli.path));
     }
 
-    // First, verify tests pass on the original code
-    println!("Verifying original tests pass...");
-    if !run_cargo_test(crate_root, cli.timeout) {
-        eprintln!("Error: Tests fail on original code. Fix tests before mutating.");
-        std::process::exit(1);
-    }
-    println!("✓ Original tests pass.\n");
+    verify_tests_pass(crate_root, cli.timeout)?;
 
-    // Find source files to mutate
     let source_files = find_source_files(crate_root, &cli.files);
     if source_files.is_empty() {
-        eprintln!("No source files found to mutate.");
-        std::process::exit(1);
+        return Err("No source files found to mutate.".to_string());
     }
-
     println!("Found {} source files to mutate.\n", source_files.len());
 
-    // Generate mutants
+    let all_mutants = generate_all_mutants(&source_files, cli.max_mutants);
+    if all_mutants.is_empty() || cli.max_mutants == 0 {
+        println!("No mutants to test (--max-mutants 0).");
+        return Ok(());
+    }
+
+    let results = test_all_mutants(&all_mutants, crate_root, cli.timeout);
+
+    match cli.format.as_str() {
+        "json" => output_json(&results),
+        _ => output_table(&results),
+    }
+
+    Ok(())
+}
+
+fn verify_tests_pass(crate_root: &Path, timeout: u64) -> Result<(), String> {
+    println!("Verifying original tests pass...");
+    if !run_cargo_test(crate_root, timeout) {
+        return Err("Tests fail on original code. Fix tests before mutating.".to_string());
+    }
+    println!("✓ Original tests pass.\n");
+    Ok(())
+}
+
+fn generate_all_mutants(source_files: &[PathBuf], max_mutants: usize) -> Vec<Mutant> {
     let mut all_mutants = Vec::new();
     let mut mutant_id = 0;
 
-    for file_path in &source_files {
-        let source = match std::fs::read_to_string(file_path) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Warning: Could not read {}: {}", file_path.display(), e);
-                continue;
-            }
+    for file_path in source_files {
+        let Ok(source) = std::fs::read_to_string(file_path) else {
+            eprintln!("Warning: Could not read {}", file_path.display());
+            continue;
         };
-
         let mutants = generate_mutants(&source, &file_path.to_string_lossy(), &mut mutant_id);
         all_mutants.extend(mutants);
     }
 
-    // Limit mutants
-    if all_mutants.len() > cli.max_mutants {
-        println!("Generated {} mutants, limiting to {}.", all_mutants.len(), cli.max_mutants);
-        all_mutants.truncate(cli.max_mutants);
+    if all_mutants.len() > max_mutants {
+        println!("Generated {} mutants, limiting to {}.", all_mutants.len(), max_mutants);
+        all_mutants.truncate(max_mutants);
     } else {
         println!("Generated {} mutants.", all_mutants.len());
     }
 
-    // Dry run removed -- use --max-mutants 0 equivalent
-    if cli.max_mutants == 0 {
-        println!("No mutants to test (--max-mutants 0).");
-        return;
-    }
+    all_mutants
+}
 
-    // Test each mutant
+fn test_all_mutants(all_mutants: &[Mutant], crate_root: &Path, timeout: u64) -> Vec<MutantResult> {
     let mut results = Vec::new();
     for (i, mutant) in all_mutants.iter().enumerate() {
-        print!("[{}/{}] Testing mutant {} ({}:{})... ",
-            i + 1, all_mutants.len(), mutant.id, mutant.file, mutant.line);
+        print!(
+            "[{}/{}] Testing mutant {} ({}:{})... ",
+            i + 1,
+            all_mutants.len(),
+            mutant.id,
+            mutant.file,
+            mutant.line
+        );
 
-        let result = test_mutant(mutant, crate_root, cli.timeout);
+        let result = test_mutant(mutant, crate_root, timeout);
         let status_str = match result.status.as_str() {
             "killed" => "✓ KILLED",
             "survived" => "✗ SURVIVED",
@@ -141,15 +161,9 @@ fn main() {
             _ => "? ERROR",
         };
         println!("{}", status_str);
-
         results.push(result);
     }
-
-    // Output results
-    match cli.format.as_str() {
-        "json" => output_json(&results),
-        _ => output_table(&results),
-    }
+    results
 }
 
 /// Generate all possible mutants for a source file
@@ -388,23 +402,50 @@ fn output_table(results: &[MutantResult]) {
 
     println!();
     println!("MUTATION TESTING RESULTS");
-    println!("{}", "─".repeat(80));
+    println!("{}", separator(80));
 
     if survived > 0 {
-        println!("\nSURVIVED MUTANTS (tests didn't catch these changes):");
-        println!("{}", "─".repeat(80));
+        println!();
+        println!("SURVIVED MUTANTS (tests didn't catch these changes):");
+
+        let columns = [
+            Column::left("ID", 6),
+            Column::left("FILE", 40),
+            Column::right("LINE", 5),
+            Column::left("DESCRIPTION", 30),
+        ];
+        print_table_header(&columns);
+
         for r in results.iter().filter(|r| r.status == "survived") {
-            println!("  [{}] {}:{}", r.id, r.file, r.line);
-            println!("       {}", r.description);
+            let id_str = format!("[{}]", r.id);
+            let line_str = r.line.to_string();
+            print_table_row(&columns, &[&id_str, &r.file, &line_str, &r.description]);
         }
     }
 
     println!();
-    println!("{}", "─".repeat(80));
-    println!("SUMMARY");
-    println!("  Total mutants:  {}", total);
-    println!("  Killed:         {} ({:.0}%)", killed, killed as f64 / total as f64 * 100.0);
-    println!("  Survived:       {} ({:.0}%)", survived, survived as f64 / total as f64 * 100.0);
+    println!("{}", separator(80));
+
+    let score = if total > 0 { killed as f64 / total as f64 * 100.0 } else { 0.0 };
+    let verdict = if score >= 90.0 {
+        "Excellent -- strong test suite"
+    } else if score >= 70.0 {
+        "Good -- most mutations caught"
+    } else if score >= 50.0 {
+        "Weak -- many mutations survived"
+    } else {
+        "Poor -- test suite needs significant work"
+    };
+
+    let summary = vec![
+        ("Total mutants:", total.to_string()),
+        ("Killed:", format!("{} ({:.0}%)", killed, killed as f64 / total as f64 * 100.0)),
+        ("Survived:", format!("{} ({:.0}%)", survived, survived as f64 / total as f64 * 100.0)),
+        ("Mutation Score:", format!("{:.0}%", score)),
+        ("Verdict:", verdict.to_string()),
+    ];
+    quality_common::print_summary(&summary);
+
     if timeout > 0 {
         println!("  Timeout:        {}", timeout);
     }
@@ -412,24 +453,9 @@ fn output_table(results: &[MutantResult]) {
         println!("  Error:          {}", error);
     }
 
-    let score = if total > 0 { killed as f64 / total as f64 * 100.0 } else { 0.0 };
-    println!();
-    println!("  Mutation Score: {:.0}%", score);
-
-    let verdict = if score >= 90.0 {
-        "Excellent — strong test suite"
-    } else if score >= 70.0 {
-        "Good — most mutations caught"
-    } else if score >= 50.0 {
-        "Weak — many mutations survived"
-    } else {
-        "Poor — test suite needs significant work"
-    };
-    println!("  Verdict:        {}", verdict);
-
     if survived > 0 {
         println!();
-        println!("  ⚠ {} mutant(s) survived. Your tests didn't detect these code changes.", survived);
+        println!("  {} mutant(s) survived. Your tests didn't detect these code changes.", survived);
         println!("    Consider adding tests for the affected functions.");
     }
 }
