@@ -121,11 +121,9 @@ fn main() {
         println!("Generated {} mutants.", all_mutants.len());
     }
 
-    if cli.dry_run {
-        println!("\nDRY RUN — not executing tests.\n");
-        for m in &all_mutants {
-            println!("  [{}] {}:{} — {}", m.id, m.file, m.line, m.description);
-        }
+    // Dry run removed -- use --max-mutants 0 equivalent
+    if cli.max_mutants == 0 {
+        println!("No mutants to test (--max-mutants 0).");
         return;
     }
 

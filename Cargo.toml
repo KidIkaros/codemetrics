@@ -3,6 +3,11 @@ members = [
     "crates/ast-parse",
     "crates/crap-metric",
     "crates/mutation-test",
+    "crates/debt-scan",
+    "crates/doc-coverage",
+    "crates/duplication",
+    "crates/coupling",
+    "crates/risk-map",
 ]
 resolver = "2"
 

@@ -9,6 +9,11 @@ Code quality metrics for Rust. Two CLI tools built on a shared AST parsing libra
 | `ast-parse` | (lib) | Shared AST parsing -- cyclomatic complexity, lcov coverage parsing |
 | `crap-metric` | `crap` | CRAP score calculator -- maintenance risk scoring |
 | `mutation-test` | `mutate` | Mutation testing -- evaluate test suite quality |
+| `debt-scan` | `debt` | Technical debt scanner -- TODO/FIXME/HACK tracking with git blame |
+| `doc-coverage` | `doccov` | Documentation coverage -- public API doc comment percentage |
+| `duplication` | `dupfind` | Code duplication -- AST-based structural similarity detection |
+| `coupling` | `coupling` | Coupling analysis -- module dependency graphs, fan-in/fan-out |
+| `risk-map` | `riskmap` | Risk map -- churn × complexity cross-reference (the killer feature) |
 
 ## CRAP Metric
 
@@ -107,6 +112,67 @@ CARGO_TARGET_DIR=/tmp/quality-tools-build cargo build
 
 # Run tests
 cargo test
+```
+
+## Other Tools
+
+### Technical Debt Scanner (`debt`)
+
+```bash
+# Scan for TODO/FIXME/HACK/XXX markers
+debt ./src --recursive
+
+# Only show FIXME and HACK
+debt ./src --recursive --marker fixme,hack
+
+# Sort by author
+debt ./src --recursive --sort author
+```
+
+### Documentation Coverage (`doccov`)
+
+```bash
+# Check public API documentation
+doccov ./src --recursive
+
+# Fail if below 80% coverage
+doccov ./src --recursive --min 80
+```
+
+### Code Duplication (`dupfind`)
+
+```bash
+# Find structural duplicates (min 5 lines)
+dupfind ./src --recursive
+
+# Stricter: min 10 lines
+dupfind ./src --recursive --min-lines 10
+```
+
+### Coupling Analysis (`coupling`)
+
+```bash
+# Module dependency graph
+coupling ./
+
+# Export as Graphviz dot
+coupling ./ --format dot > deps.dot && dot -Tpng deps.dot -o deps.png
+
+# Only show tightly coupled modules
+coupling ./ --min-coupling 5
+```
+
+### Risk Map (`riskmap`)
+
+```bash
+# Cross-reference git churn with complexity
+riskmap ./
+
+# Only last 3 months
+riskmap ./ --since "3 months ago"
+
+# Only show risk score >= 30
+riskmap ./ --min-risk 30
 ```
 
 ## License
