@@ -1,0 +1,17 @@
+[package]
+name = "quality-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quality-common = { path = "../quality-common" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "process", "time", "io-std"] }
+clap = { version = "4", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = ["tcp"]
+tcp = []
+stdio = []

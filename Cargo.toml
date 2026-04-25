@@ -2,6 +2,7 @@
 members = [
     "crates/quality-common",
     "crates/ast-parse",
+    "crates/ast-parse-ts",
     "crates/crap-metric",
     "crates/mutation-test",
     "crates/debt-scan",
@@ -10,6 +11,10 @@ members = [
     "crates/coupling",
     "crates/risk-map",
     "crates/quality-cli",
+    "crates/quality-server",
+    "crates/fuzz-surface",
+    "crates/prop-cov",
+    "crates/taint-scan",
 ]
 resolver = "2"
 

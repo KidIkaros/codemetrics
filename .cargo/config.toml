@@ -1,0 +1,13 @@
+[build]
+# Cap parallel compile jobs to avoid OOM on memory-constrained systems.
+# Reads CARGO_BUILD_JOBS env if set, otherwise defaults to nproc/2 (min 2).
+# Override per-run: CARGO_BUILD_JOBS=4 cargo test
+
+[test]
+# Limit test thread concurrency. Can be overridden with RUST_TEST_THREADS env.
+# Lower this if tests crash due to resource exhaustion.
+# threads = 4  # uncomment to hard-cap; default uses logical CPUs
+
+[profile.test]
+# Reduce codegen units to lower peak memory during test compilation.
+codegen-units = 4

@@ -1,0 +1,20 @@
+[package]
+name = "ast-parse-ts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Universal AST parsing via tree-sitter — complexity, doc coverage, identifiers for Rust/Python/JS/TS/Go"
+
+[lib]
+name = "ast_parse_ts"
+path = "src/lib.rs"
+
+[dependencies]
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.25"
+
+[dev-dependencies]

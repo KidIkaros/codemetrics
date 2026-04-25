@@ -1,12 +1,13 @@
 # quality-tools
 
-Code quality metrics for Rust. Two CLI tools built on a shared AST parsing library.
+Code quality metrics for Rust and other languages. Built on `syn` for Rust and `tree-sitter` for universal AST parsing across Python, JavaScript, TypeScript, and Go.
 
 ## Crates
 
 | Crate | Binary | Purpose |
 |-------|--------|---------|
-| `ast-parse` | (lib) | Shared AST parsing -- cyclomatic complexity, lcov coverage parsing |
+| `ast-parse` | (lib) | Shared AST parsing (syn) -- cyclomatic complexity, lcov coverage parsing |
+| `ast-parse-ts` | (lib) | Universal AST parsing (tree-sitter) -- complexity, doc coverage, fingerprints, imports for Rust/Python/JS/TS/Go |
 | `crap-metric` | `crap` | CRAP score calculator -- maintenance risk scoring |
 | `mutation-test` | `mutate` | Mutation testing -- evaluate test suite quality |
 | `debt-scan` | `debt` | Technical debt scanner -- TODO/FIXME/HACK tracking with git blame |
@@ -14,6 +15,26 @@ Code quality metrics for Rust. Two CLI tools built on a shared AST parsing libra
 | `duplication` | `dupfind` | Code duplication -- AST-based structural similarity detection |
 | `coupling` | `coupling` | Coupling analysis -- module dependency graphs, fan-in/fan-out |
 | `risk-map` | `riskmap` | Risk map -- churn × complexity cross-reference (the killer feature) |
+
+## Multi-Language Support
+
+The `ast-parse-ts` crate uses tree-sitter to provide cross-language metrics. Not all tools apply to every language — some require compilation (CRAP, mutation testing, fuzz surface, prop-cov).
+
+| Tool | Rust | Python | JS/TS | Go |
+|------|:----:|:------:|:-----:|:--:|
+| `debt-scan` | ✓ | ✓ | ✓ | ✓ |
+| `taint-scan` | ✓ | ✓ | ✓ | ✓ |
+| `complexity` | ✓ | ✓ | ✓ | ✓ |
+| `doc-coverage` | ✓ | ✓ | ✓ | ✓ |
+| `duplication` | ✓ | ✓ | ✓ | ✓ |
+| `coupling` | ✓ | ✓ | ✓ | ✓ |
+| `risk-map` | ✓ | ✓ | ✓ | ✓ |
+| `crap-metric` | ✓ | — | — | — |
+| `mutation-test` | ✓ | — | — | — |
+| `fuzz-surface` | ✓ | — | — | — |
+| `prop-cov` | ✓ | — | — | — |
+
+**Note:** For non-Rust languages, `ast-parse-ts` uses tree-sitter grammars (pure Rust, no external dependencies). Rust-specific tools (`crap`, `mutate`, `fuzz`, `propcov`) require `cargo` and are Rust-only by design.
 
 ## CRAP Metric
 
@@ -173,6 +194,35 @@ riskmap ./ --since "3 months ago"
 
 # Only show risk score >= 30
 riskmap ./ --min-risk 30
+```
+
+### Unified CLI (`quality`)
+
+The `quality` CLI runs all tools in one batch, detects languages automatically, and produces CI-ready JSON/SARIF output.
+
+```bash
+# Full audit (auto-detects languages)
+quality run . --format json
+
+# Watch mode — re-run checks on .rs file changes
+quality watch . --checks debt,doc,crap --debounce-ms 500
+
+# Record run to history
+quality run . --format json | quality history record --report /dev/stdin
+
+# Show trend history
+quality history show
+
+# Install pre-commit hook
+quality install-hooks .
+quality uninstall-hooks .
+```
+
+**Multi-language example:**
+```bash
+# Scan a mixed Python/JS/Rust repo
+quality run ./my-project --format json
+# → summary.languages_detected: ["javascript", "python", "rust"]
 ```
 
 ## License

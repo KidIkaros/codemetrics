@@ -1,10 +1,10 @@
 use clap::Parser;
 use serde::Serialize;
-use std::collections::HashMap;
 use syn::visit::Visit;
 use syn::{Block, Expr, ItemFn, Stmt};
 
-use quality_common::{find_rust_files, truncate};
+use ast_parse_ts::{fingerprint_similarity, parse_fingerprints_file};
+use quality_common::{find_source_files, truncate};
 
 #[derive(Parser)]
 #[command(name = "dupfind", about = "Code duplication detection -- find copy-pasted blocks via structural similarity")]
@@ -64,24 +64,26 @@ struct FunctionSkeleton {
     stmt_count: usize,
 }
 
+const SUPPORTED_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go"];
+
 fn main() {
     let cli = Cli::parse();
 
-    let files = find_rust_files(&cli.path, cli.recursive);
-    if files.is_empty() {
-        eprintln!("No .rs files found at {}", cli.path);
+    let all_files = find_source_files(&cli.path, cli.recursive, SUPPORTED_EXTS);
+    if all_files.is_empty() {
+        eprintln!("No supported source files found at {}", cli.path);
         std::process::exit(1);
     }
 
-    // Extract function skeletons
-    let mut skeletons = Vec::new();
+    let mut skeletons: Vec<FunctionSkeleton> = Vec::new();
 
-    for file_path in &files {
+    // Rust: use high-fidelity syn visitor
+    let rust_files: Vec<_> = all_files.iter().filter(|f| f.ends_with(".rs")).cloned().collect();
+    for file_path in &rust_files {
         let source = match std::fs::read_to_string(file_path) {
             Ok(s) => s,
             Err(_) => continue,
         };
-
         match syn::parse_file(&source) {
             Ok(ast) => {
                 let mut visitor = SkeletonVisitor {
@@ -93,6 +95,21 @@ fn main() {
                 skeletons.extend(visitor.skeletons);
             }
             Err(e) => eprintln!("Warning: parse error in {}: {}", file_path, e),
+        }
+    }
+
+    // Other languages: use tree-sitter fingerprints
+    let other_files: Vec<_> = all_files.iter().filter(|f| !f.ends_with(".rs")).cloned().collect();
+    for file_path in &other_files {
+        for fp in parse_fingerprints_file(file_path) {
+            let stmt_count = fp.fingerprint.split(';').count();
+            skeletons.push(FunctionSkeleton {
+                name: format!("{}:{}", fp.file, fp.line),
+                file: fp.file,
+                line: fp.line,
+                pattern: fp.fingerprint,
+                stmt_count,
+            });
         }
     }
 
@@ -321,31 +338,10 @@ fn try_build_group(
     }
 }
 
-/// Calculate similarity between two patterns (0.0 to 1.0)
+/// Calculate similarity between two patterns (0.0 to 1.0).
+/// Delegates to `ast_parse_ts::fingerprint_similarity` (Jaccard on token sets).
 fn pattern_similarity(a: &str, b: &str) -> f64 {
-    let tokens_a: Vec<&str> = a.split(';').collect();
-    let tokens_b: Vec<&str> = b.split(';').collect();
-
-    if tokens_a.is_empty() || tokens_b.is_empty() {
-        return 0.0;
-    }
-
-    // Count matching tokens in order (longest common subsequence ratio)
-    let max_len = tokens_a.len().max(tokens_b.len());
-    let mut matches = 0;
-
-    // Simple approach: count tokens that appear in both
-    let set_a: std::collections::HashSet<&str> = tokens_a.iter().cloned().collect();
-    let set_b: std::collections::HashSet<&str> = tokens_b.iter().cloned().collect();
-    let intersection = set_a.intersection(&set_b).count();
-    let union = set_a.union(&set_b).count();
-
-    if union == 0 {
-        return 0.0;
-    }
-
-    // Jaccard similarity on token sets
-    intersection as f64 / union as f64
+    fingerprint_similarity(a, b)
 }
 
 
@@ -608,6 +604,100 @@ mod tests {
     fn test_pattern_similarity_empty() {
         assert_eq!(pattern_similarity("", "A"), 0.0);
         assert_eq!(pattern_similarity("A", ""), 0.0);
+    }
+
+    #[test]
+    fn test_python_fingerprint() {
+        let source = r#"
+def foo(x, y):
+    if x > 0:
+        if y > 0:
+            return x + y
+        return x - y
+    if y == 0:
+        return 0
+    return x * y
+
+# Exact duplicate
+def bar(x, y):
+    if x > 0:
+        if y > 0:
+            return x + y
+        return x - y
+    if y == 0:
+        return 0
+    return x * y
+"#;
+        let fps = ast_parse_ts::parse_fingerprints(source, "test.py", ast_parse_ts::Language::Python);
+        assert_eq!(fps.len(), 2, "Should find 2 Python functions");
+        assert_eq!(fps[0].fingerprint, fps[1].fingerprint, "Identical functions should match");
+    }
+
+    #[test]
+    fn test_js_fingerprint() {
+        let source = r#"
+function foo(x, y) {
+    if (x > 0) {
+        if (y > 0) {
+            return x + y;
+        }
+        return x - y;
+    }
+    return x * y;
+}
+
+function bar(x, y) {
+    if (x > 0) {
+        if (y > 0) {
+            return x + y;
+        }
+        return x - y;
+    }
+    return x * y;
+}
+"#;
+        let fps = ast_parse_ts::parse_fingerprints(source, "test.js", ast_parse_ts::Language::JavaScript);
+        assert!(fps.len() >= 2, "Should find at least 2 JS functions, got {}", fps.len());
+        // Find two identical fingerprints among all detected functions
+        let first_fp = &fps[0].fingerprint;
+        let matches = fps.iter().filter(|f| f.fingerprint == *first_fp).count();
+        assert!(matches >= 2, "Expected at least 2 identical fingerprints");
+    }
+
+    #[test]
+    fn test_go_fingerprint() {
+        let source = r#"
+package test
+
+func Foo(x int, y int) int {
+    if x > 0 {
+        if y > 0 {
+            return x + y
+        }
+        return x - y
+    }
+    if y == 0 {
+        return 0
+    }
+    return x * y
+}
+
+func Bar(x int, y int) int {
+    if x > 0 {
+        if y > 0 {
+            return x + y
+        }
+        return x - y
+    }
+    if y == 0 {
+        return 0
+    }
+    return x * y
+}
+"#;
+        let fps = ast_parse_ts::parse_fingerprints(source, "test.go", ast_parse_ts::Language::Go);
+        assert_eq!(fps.len(), 2, "Should find 2 Go functions");
+        assert_eq!(fps[0].fingerprint, fps[1].fingerprint, "Identical functions should match");
     }
 }
 

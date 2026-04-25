@@ -2,7 +2,7 @@ use clap::Parser;
 use serde::Serialize;
 use std::collections::HashMap;
 
-use quality_common::{find_source_files, get_git_blame, Column, print_table_header, print_table_row};
+use quality_common::{find_source_files, get_git_blame_batch, Column, print_table_header, print_table_row};
 
 #[derive(Parser)]
 #[command(name = "debt", about = "Technical debt scanner -- track TODO/FIXME/HACK/XXX markers")]
@@ -103,6 +103,9 @@ fn scan_files(files: &[String], marker_filter: &Option<Vec<String>>) -> Vec<Debt
 }
 
 fn scan_source(file_path: &str, source: &str, marker_filter: &Option<Vec<String>>, items: &mut Vec<DebtItem>) {
+    // First pass: find all marker lines
+    let mut marker_lines: Vec<(usize, &str, &str)> = Vec::new(); // (line_num, marker_name, marker_type)
+
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
         for (marker_name, marker_type) in MARKERS {
@@ -110,18 +113,30 @@ fn scan_source(file_path: &str, source: &str, marker_filter: &Option<Vec<String>
             if is_marker_in_string(trimmed, marker_name) { continue; }
             if is_filtered_out(marker_filter, marker_type) { continue; }
 
-            let text = extract_comment_text(line, marker_name);
-            let (author, date) = get_git_blame(file_path, line_num + 1);
-            items.push(DebtItem {
-                file: file_path.to_string(),
-                line: line_num + 1,
-                marker_type: marker_type.to_string(),
-                text,
-                author,
-                date,
-            });
-            break;
+            marker_lines.push((line_num + 1, *marker_name, *marker_type));
+            break; // Only count first matching marker per line
         }
+    }
+
+    // Batch git blame for all marker lines
+    let line_numbers: Vec<usize> = marker_lines.iter().map(|(ln, _, _)| *ln).collect();
+    let blame_info = get_git_blame_batch(file_path, &line_numbers);
+
+    // Create DebtItems with blame info
+    for (line_num, marker_name, marker_type) in marker_lines {
+        let line_idx = line_num - 1;
+        let line_text = source.lines().nth(line_idx).unwrap_or("");
+        let text = extract_comment_text(line_text, marker_name);
+        let (author, date) = blame_info.get(&line_num).cloned().unwrap_or((None, None));
+
+        items.push(DebtItem {
+            file: file_path.to_string(),
+            line: line_num,
+            marker_type: marker_type.to_string(),
+            text,
+            author,
+            date,
+        });
     }
 }
 

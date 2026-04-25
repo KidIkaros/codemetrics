@@ -10,6 +10,7 @@ name = "coupling"
 path = "src/main.rs"
 
 [dependencies]
+ast-parse-ts = { path = "../ast-parse-ts" }
 quality-common = { path = "../quality-common" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

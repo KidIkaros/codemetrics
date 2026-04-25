@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "quality-batch",
+          "version": "0.1.0",
+          "rules": []
+        }
+      },
+      "invocations": [
+        {
+          "execution_successful": true,
+          "exit_code": 0,
+          "end_time_utc": "2026-04-25T10:17:54.674861341+00:00"
+        }
+      ],
+      "results": []
+    }
+  ]
+}

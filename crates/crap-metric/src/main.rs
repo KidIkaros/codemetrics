@@ -1,9 +1,7 @@
 use clap::Parser;
 use serde::Serialize;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
-use ast_parse::{analyze_file, crap_category, crap_score, find_coverage, parse_lcov, FileCoverage, FunctionComplexity};
+use ast_parse::{analyze_file, crap_category, crap_score, find_coverage, parse_lcov};
 use quality_common::{find_rust_files, Column, print_table_header, print_table_row};
 
 #[derive(Parser)]

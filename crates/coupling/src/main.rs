@@ -2,6 +2,7 @@ use clap::Parser;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use ast_parse_ts::{parse_imports_file, Language};
 
 #[derive(Parser)]
 #[command(name = "coupling", about = "Coupling analysis -- module dependency graphs, fan-in/fan-out")]
@@ -26,6 +27,7 @@ struct ModuleInfo {
     fan_out: usize,           // how many modules I depend on
     fan_in: usize,            // how many modules depend on me
     instability: f64,         // fan_out / (fan_in + fan_out)
+    implicit_deps: Vec<String>, // detected module references without explicit use statements
 }
 
 #[derive(Serialize)]
@@ -41,6 +43,7 @@ struct CouplingSummary {
     avg_fan_in: f64,
     avg_fan_out: f64,
     most_coupled: Vec<String>,
+    modules_with_implicit: Vec<String>,
 }
 
 fn main() {
@@ -66,6 +69,10 @@ fn main() {
 
     // Parse imports from each module
     let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut implicit_refs: HashMap<String, HashSet<String>> = HashMap::new();
+
+    // Collect all known module names for implicit reference detection
+    let known_modules: HashSet<String> = module_files.keys().cloned().collect();
 
     for (module_name, file_path) in &module_files {
         let source = match std::fs::read_to_string(file_path) {
@@ -74,11 +81,17 @@ fn main() {
         };
 
         let imports = extract_imports(&source, module_name, &internal_crates);
-        dependencies.insert(module_name.clone(), imports);
+        dependencies.insert(module_name.clone(), imports.clone());
+
+        let implicit = extract_implicit_refs(&source, module_name, &known_modules, &imports);
+        implicit_refs.insert(module_name.clone(), implicit);
     }
 
+    // Also scan non-Rust source files via tree-sitter
+    scan_multilang_imports(&src_path, &mut dependencies);
+
     // Build module info
-    let modules = build_module_info(&dependencies);
+    let modules = build_module_info(&dependencies, &implicit_refs);
 
     // Filter by minimum coupling
     let filtered: Vec<_> = if cli.min_coupling > 0 {
@@ -94,6 +107,43 @@ fn main() {
         "json" => output_json(&filtered),
         "dot" => output_dot(&filtered),
         _ => output_table(&filtered),
+    }
+}
+
+/// Scan non-Rust source files via tree-sitter and inject their imports into the dependency graph.
+fn scan_multilang_imports(dir: &Path, deps: &mut HashMap<String, HashSet<String>>) {
+    const EXTS: &[&str] = &["py", "pyi", "js", "mjs", "ts", "tsx", "go"];
+    collect_multilang_files(dir, EXTS, deps);
+}
+
+fn collect_multilang_files(dir: &Path, exts: &[&str], deps: &mut HashMap<String, HashSet<String>>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if exts.contains(&ext) {
+                let file_str = path.to_string_lossy().to_string();
+                let lang = Language::from_extension(&file_str);
+                if lang == Language::Unknown { continue; }
+                // Use file path as the module key
+                let module_key = file_str.clone();
+                let import_info = parse_imports_file(&file_str);
+                let targets: HashSet<String> = import_info
+                    .into_iter()
+                    .map(|i| i.imported_module)
+                    .filter(|m| !m.is_empty())
+                    .collect();
+                if !targets.is_empty() {
+                    deps.entry(module_key).or_default().extend(targets);
+                }
+            }
+        } else if path.is_dir() && should_traverse_dir(&path) {
+            collect_multilang_files(&path, exts, deps);
+        }
     }
 }
 
@@ -215,6 +265,70 @@ fn extract_cross_crate_import(use_path: &str) -> Option<String> {
     }
 }
 
+/// Detect implicit module references in source code that aren't covered by `use` statements.
+/// These are direct path references like `super::foo::bar()`, `crate::bar::baz`, or `mod_name::Type`.
+fn extract_implicit_refs(
+    source: &str,
+    current_module: &str,
+    known_modules: &HashSet<String>,
+    explicit_imports: &HashSet<String>,
+) -> HashSet<String> {
+    let mut implicit = HashSet::new();
+    let crate_prefix = current_module.split("::").next().unwrap_or(current_module);
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Skip comments and use statements (already covered)
+        if trimmed.starts_with("//") || trimmed.starts_with("use ") {
+            continue;
+        }
+
+        // Pattern 1: `crate::xxx::` or `crate::xxx` references
+        if let Some(start) = line.find("crate::") {
+            let after = &line[start + 7..];
+            // Extract the next path component: alphanumeric, underscore, colon (for :: separators)
+            let end = after.find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+                .unwrap_or(after.len());
+            let path = &after[..end];
+            let parts: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
+            if !parts.is_empty() {
+                let dep = format!("{}::{}::...", crate_prefix, parts[0]);
+                if path != crate_prefix && !explicit_imports.contains(&dep.replace("::...", "")) {
+                    implicit.insert(dep);
+                }
+            }
+        }
+
+        // Pattern 2: `super::xxx::` references
+        if let Some(start) = line.find("super::") {
+            let after = &line[start + 7..];
+            let end = after.find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+                .unwrap_or(after.len());
+            let path = &after[..end];
+            let parts: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
+            if !parts.is_empty() {
+                let dep = format!("{}::super::{}::...", crate_prefix, parts[0]);
+                implicit.insert(dep);
+            }
+        }
+
+        // Pattern 3: Direct `xxx::yyy` where xxx is another known module
+        for module in known_modules {
+            let short = module.split("::").last().unwrap_or(module);
+            let pattern = format!("{}::", short);
+            if line.contains(&pattern) && short != crate_prefix {
+                // Don't flag if it's part of a use statement or already imported
+                let dep_short = format!("{}::{}::...", crate_prefix, short);
+                if !explicit_imports.contains(&dep_short.replace("::...", "")) {
+                    implicit.insert(dep_short);
+                }
+            }
+        }
+    }
+
+    implicit
+}
+
 fn extract_imports(source: &str, current_module: &str, _internal_crates: &HashSet<String>) -> HashSet<String> {
     let mut imports = HashSet::new();
     let crate_prefix = current_module.split("::").next().unwrap_or(current_module);
@@ -253,7 +367,10 @@ fn extract_imports(source: &str, current_module: &str, _internal_crates: &HashSe
     imports
 }
 
-fn build_module_info(dependencies: &HashMap<String, HashSet<String>>) -> Vec<ModuleInfo> {
+fn build_module_info(
+    dependencies: &HashMap<String, HashSet<String>>,
+    implicit_refs: &HashMap<String, HashSet<String>>,
+) -> Vec<ModuleInfo> {
     // Build reverse dependency map
     let mut reverse: HashMap<String, HashSet<String>> = HashMap::new();
     for (module, deps) in dependencies {
@@ -278,6 +395,11 @@ fn build_module_info(dependencies: &HashMap<String, HashSet<String>>) -> Vec<Mod
                 .map(|s| s.iter().cloned().collect())
                 .unwrap_or_default();
 
+            let implicit_deps: Vec<String> = implicit_refs
+                .get(name)
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
+
             let fan_out = imports.len();
             let fan_in = imported_by.len();
             let total = fan_in + fan_out;
@@ -294,6 +416,7 @@ fn build_module_info(dependencies: &HashMap<String, HashSet<String>>) -> Vec<Mod
                 fan_out,
                 fan_in,
                 instability,
+                implicit_deps,
             }
         })
         .collect();
@@ -358,6 +481,27 @@ fn output_table(modules: &[ModuleInfo]) {
             println!("    {} (fan-in: {}, fan-out: {})", m.name, m.fan_in, m.fan_out);
         }
     }
+
+    // Implicit dependencies
+    let with_implicit: Vec<_> = modules.iter()
+        .filter(|m| !m.implicit_deps.is_empty())
+        .collect();
+
+    if !with_implicit.is_empty() {
+        println!();
+        println!("  IMPLICIT DEPENDENCIES (no explicit use statement):");
+        for m in with_implicit.iter().take(5) {
+            println!("    {} has {} implicit reference(s): {}",
+                m.name,
+                m.implicit_deps.len(),
+                m.implicit_deps.join(", "));
+        }
+        let total_implicit: usize = with_implicit.iter().map(|m| m.implicit_deps.len()).sum();
+        println!();
+        println!("    {} modules have {} total implicit dependencies.",
+            with_implicit.len(), total_implicit);
+        println!("    Consider adding explicit use statements for clarity.");
+    }
 }
 
 fn output_json(modules: &[ModuleInfo]) {
@@ -370,6 +514,11 @@ fn output_json(modules: &[ModuleInfo]) {
         .map(|m| m.name.clone())
         .collect();
 
+    let modules_with_implicit: Vec<String> = modules.iter()
+        .filter(|m| !m.implicit_deps.is_empty())
+        .map(|m| m.name.clone())
+        .collect();
+
     let report = CouplingReport {
         modules: modules.to_vec(),
         summary: CouplingSummary {
@@ -378,6 +527,7 @@ fn output_json(modules: &[ModuleInfo]) {
             avg_fan_in: if n > 0 { total_fan_in as f64 / n as f64 } else { 0.0 },
             avg_fan_out: if n > 0 { total_fan_out as f64 / n as f64 } else { 0.0 },
             most_coupled,
+            modules_with_implicit,
         },
     };
 

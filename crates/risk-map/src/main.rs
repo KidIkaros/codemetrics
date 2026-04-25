@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use ast_parse::analyze_file;
+use ast_parse_ts::{parse_complexity_file, Language};
 use quality_common::{get_git_churn, Column, print_table_header, print_table_row, separator};
 
 #[derive(Parser)]
@@ -38,6 +39,8 @@ struct FileRisk {
     risk_score: u32,
     /// Risk category
     category: String,
+    /// Number of unsafe blocks in the file
+    unsafe_count: u32,
     /// Most complex functions
     hot_functions: Vec<String>,
 }
@@ -54,6 +57,7 @@ struct RiskSummary {
     high_risk: usize,
     medium_risk: usize,
     low_risk: usize,
+    total_unsafe: u32,
     danger_zone: Vec<String>, // files with both high churn AND high complexity
 }
 
@@ -88,53 +92,94 @@ fn run(cli: Cli) -> Result<(), String> {
     Ok(())
 }
 
+const SUPPORTED_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go"];
+
 fn build_file_risks(repo_root: &Path, churn_data: &HashMap<String, u32>) -> Vec<FileRisk> {
     let mut file_risks = Vec::new();
     for (file_path, churn_count) in churn_data {
         let full_path = repo_root.join(file_path);
-        if !full_path.exists() || full_path.extension().map_or(true, |e| e != "rs") {
+        if !full_path.exists() {
+            continue;
+        }
+        let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !SUPPORTED_EXTS.contains(&ext) {
             continue;
         }
         let full_path_str = full_path.to_string_lossy().to_string();
-        match analyze_file(&full_path_str) {
-            Ok(analysis) => {
-                file_risks.push(build_risk_from_analysis(file_path, *churn_count, &analysis));
+        let lang = Language::from_extension(&full_path_str);
+
+        // For Rust, prefer the richer ast-parse (syn) which gives unsafe counts.
+        // For all other languages use ast-parse-ts.
+        if lang == Language::Rust {
+            match analyze_file(&full_path_str) {
+                Ok(analysis) => {
+                    file_risks.push(build_risk_from_analysis(file_path, *churn_count, &analysis));
+                }
+                Err(_) => {
+                    // Fallback to tree-sitter for Rust if syn fails
+                    let ts_funcs = parse_complexity_file(&full_path_str);
+                    file_risks.push(build_risk_from_ts(file_path, *churn_count, &ts_funcs, lang));
+                }
             }
-            Err(_) => {
+        } else {
+            let ts_funcs = parse_complexity_file(&full_path_str);
+            if ts_funcs.is_empty() {
                 file_risks.push(build_churn_only_risk(file_path, *churn_count));
+            } else {
+                file_risks.push(build_risk_from_ts(file_path, *churn_count, &ts_funcs, lang));
             }
         }
     }
     file_risks
 }
 
-fn build_risk_from_analysis(file_path: &str, churn: u32, analysis: &ast_parse::FileAnalysis) -> FileRisk {
-    let total_complexity: u32 = analysis.functions.iter().map(|f| f.complexity).sum();
-    let function_count = analysis.functions.len() as u32;
-
-    let mut funcs = analysis.functions.clone();
-    funcs.sort_by(|a, b| b.complexity.cmp(&a.complexity));
-    let hot_functions: Vec<String> = funcs
-        .iter()
-        .take(3)
-        .filter(|f| f.complexity > 3)
-        .map(|f| format!("{} (c:{})", f.name, f.complexity))
-        .collect();
-
-    let raw_risk = (churn as f64 * total_complexity as f64) / 10.0;
-    let risk_score = (raw_risk as u32).min(100);
-
-    let category = risk_category(risk_score);
-
+fn build_risk_from_ts(file_path: &str, churn: u32, funcs: &[ast_parse_ts::FunctionInfo], _lang: Language) -> FileRisk {
+    let total_complexity: u32 = funcs.iter().map(|f| f.complexity).sum();
+    let hot = hot_functions(funcs.iter().map(|f| (f.name.clone(), f.complexity)).collect());
+    let (risk_score, category) = compute_risk_score(churn, total_complexity, 0);
     FileRisk {
         file: file_path.to_string(),
         churn,
         complexity: total_complexity,
-        function_count,
+        function_count: funcs.len() as u32,
         risk_score,
         category,
-        hot_functions,
+        unsafe_count: 0,
+        hot_functions: hot,
     }
+}
+
+fn build_risk_from_analysis(file_path: &str, churn: u32, analysis: &ast_parse::FileAnalysis) -> FileRisk {
+    let total_complexity: u32 = analysis.functions.iter().map(|f| f.complexity).sum();
+    let unsafe_count = analysis.unsafe_blocks;
+    let hot = hot_functions(analysis.functions.iter().map(|f| (f.name.clone(), f.complexity)).collect());
+    let effective_complexity = total_complexity + (unsafe_count * 2);
+    let (risk_score, category) = compute_risk_score(churn, effective_complexity, unsafe_count);
+    FileRisk {
+        file: file_path.to_string(),
+        churn,
+        complexity: total_complexity,
+        function_count: analysis.functions.len() as u32,
+        risk_score,
+        category,
+        unsafe_count,
+        hot_functions: hot,
+    }
+}
+
+fn hot_functions(mut funcs: Vec<(String, u32)>) -> Vec<String> {
+    funcs.sort_by(|a, b| b.1.cmp(&a.1));
+    funcs.into_iter()
+        .take(3)
+        .filter(|(_, c)| *c > 3)
+        .map(|(n, c)| format!("{} (c:{})", n, c))
+        .collect()
+}
+
+fn compute_risk_score(churn: u32, effective_complexity: u32, _unsafe_count: u32) -> (u32, String) {
+    let raw_risk = (churn as f64 * effective_complexity as f64) / 10.0;
+    let risk_score = (raw_risk as u32).min(100);
+    (risk_score, risk_category(risk_score))
 }
 
 fn build_churn_only_risk(file_path: &str, churn: u32) -> FileRisk {
@@ -145,6 +190,7 @@ fn build_churn_only_risk(file_path: &str, churn: u32) -> FileRisk {
         function_count: 0,
         risk_score: churn.min(100) / 5,
         category: "CHURN_ONLY".to_string(),
+        unsafe_count: 0,
         hot_functions: vec![],
     }
 }
@@ -186,7 +232,8 @@ fn output_table(file_risks: &[FileRisk]) {
         Column::right("COMP", 6),
         Column::right("RISK", 5),
         Column::left("STATUS", 8),
-        Column::left("HOT FUNCTIONS", 25),
+        Column::right("UNSAFE", 7),
+        Column::left("HOT FUNCTIONS", 20),
     ];
     print_table_header(&columns);
 
@@ -208,6 +255,7 @@ fn output_table(file_risks: &[FileRisk]) {
         let churn_str = f.churn.to_string();
         let comp_str = f.complexity.to_string();
         let risk_str = f.risk_score.to_string();
+        let unsafe_str = f.unsafe_count.to_string();
         let status_str = format!("{} {}", icon, f.category);
         print_table_row(&columns, &[
             &f.file,
@@ -215,6 +263,7 @@ fn output_table(file_risks: &[FileRisk]) {
             &comp_str,
             &risk_str,
             &status_str,
+            &unsafe_str,
             &hot,
         ]);
     }
@@ -226,6 +275,18 @@ fn output_table(file_risks: &[FileRisk]) {
     println!("  ! DANGER/HIGH:     {} (changing often AND complex)", high);
     println!("  ~ MEDIUM:          {}", medium);
     println!("  . LOW:             {}", low);
+
+    let total_unsafe: u32 = file_risks.iter().map(|f| f.unsafe_count).sum();
+    if total_unsafe > 0 {
+        let max_unsafe = file_risks.iter().map(|f| f.unsafe_count).max().unwrap_or(0);
+        println!();
+        println!("  UNSAFE WEIGHTING:  {} total unsafe blocks across {} files", total_unsafe,
+            file_risks.iter().filter(|f| f.unsafe_count > 0).count());
+        println!("    (Each unsafe block adds +2 to effective complexity in risk scoring)");
+        if max_unsafe > 0 {
+            println!("    Most unsafe:       {} blocks in top file", max_unsafe);
+        }
+    }
 
     if !danger_zone.is_empty() {
         println!();
@@ -255,6 +316,7 @@ fn output_json(file_risks: &[FileRisk]) {
         .filter(|f| f.churn > 5 && f.complexity > 20)
         .map(|f| f.file.clone())
         .collect();
+    let total_unsafe: u32 = file_risks.iter().map(|f| f.unsafe_count).sum();
 
     let report = RiskReport {
         files: file_risks.to_vec(),
@@ -263,6 +325,7 @@ fn output_json(file_risks: &[FileRisk]) {
             high_risk: high,
             medium_risk: medium,
             low_risk: low,
+            total_unsafe,
             danger_zone,
         },
     };

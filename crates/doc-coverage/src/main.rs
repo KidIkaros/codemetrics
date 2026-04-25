@@ -5,7 +5,8 @@ use syn::{
     ImplItemFn, ItemEnum, ItemFn, ItemStruct, ItemTrait, Visibility,
 };
 
-use quality_common::{find_rust_files, Column, print_table_header, print_table_row, separator};
+use ast_parse_ts::{parse_doc_coverage_file, Language};
+use quality_common::{find_source_files, Column, print_table_header, print_table_row, separator};
 
 #[derive(Parser)]
 #[command(name = "doccov", about = "Documentation coverage -- measure public API doc comment percentage")]
@@ -60,23 +61,27 @@ struct KindBreakdown {
     impl_fns: (usize, usize),
 }
 
+const ALL_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go"];
+
 fn main() {
     let cli = Cli::parse();
 
-    let files = find_rust_files(&cli.path, cli.recursive);
-    if files.is_empty() {
-        eprintln!("No .rs files found at {}", cli.path);
+    // Collect all supported source files
+    let all_files = find_source_files(&cli.path, cli.recursive, ALL_EXTS);
+    if all_files.is_empty() {
+        eprintln!("No supported source files found at {}", cli.path);
         std::process::exit(1);
     }
 
-    let mut all_items = Vec::new();
+    let mut all_items: Vec<DocItem> = Vec::new();
 
-    for file_path in &files {
+    // Process Rust files with the high-fidelity syn visitor
+    let rust_files: Vec<_> = all_files.iter().filter(|f| f.ends_with(".rs")).cloned().collect();
+    for file_path in &rust_files {
         let source = match std::fs::read_to_string(file_path) {
             Ok(s) => s,
             Err(_) => continue,
         };
-
         match syn::parse_file(&source) {
             Ok(ast) => {
                 let mut visitor = DocVisitor {
@@ -88,6 +93,31 @@ fn main() {
                 all_items.extend(visitor.items);
             }
             Err(e) => eprintln!("Warning: parse error in {}: {}", file_path, e),
+        }
+    }
+
+    // Process non-Rust files via tree-sitter
+    let other_files: Vec<_> = all_files.iter().filter(|f| !f.ends_with(".rs")).cloned().collect();
+    for file_path in &other_files {
+        let lang = Language::from_extension(file_path);
+        if lang == Language::Unknown { continue; }
+        let stats = parse_doc_coverage_file(file_path);
+        for _ in 0..stats.total_public {
+            all_items.push(DocItem {
+                kind: lang.to_string(),
+                name: String::new(),
+                public: true,
+                documented: false,
+                file: file_path.clone(),
+                line: 0,
+            });
+        }
+        // Mark `documented` count items as documented
+        for item in all_items.iter_mut()
+            .filter(|i| i.file == *file_path)
+            .take(stats.documented)
+        {
+            item.documented = true;
         }
     }
 
@@ -355,4 +385,58 @@ fn output_json(items: &[DocItem]) {
     };
 
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
+}
+
+#[cfg(test)]
+mod tests {
+    use ast_parse_ts::Language;
+
+    #[test]
+    fn test_python_doc_coverage() {
+        let source = r#"
+def documented_func():
+    """This has a docstring."""
+    pass
+
+def undocumented_func():
+    pass
+"#;
+        let stats = ast_parse_ts::parse_doc_coverage(source, Language::Python);
+        assert_eq!(stats.total_public, 2, "Should find 2 Python functions");
+        assert_eq!(stats.documented, 1, "Only 1 should have docstring");
+    }
+
+    #[test]
+    fn test_js_doc_coverage() {
+        let source = r#"
+/** Documented function */
+function documentedFunc() {
+    return 1;
+}
+
+function undocumentedFunc() {
+    return 2;
+}
+"#;
+        let stats = ast_parse_ts::parse_doc_coverage(source, Language::JavaScript);
+        assert_eq!(stats.total_public, 2, "Should find 2 JS functions");
+        assert_eq!(stats.documented, 1, "Only 1 should have JSDoc");
+    }
+
+    #[test]
+    fn test_go_doc_coverage() {
+        let source = r#"
+// DocumentedFunc does something.
+func DocumentedFunc() int {
+    return 1
+}
+
+func UndocumentedFunc() int {
+    return 2
+}
+"#;
+        let stats = ast_parse_ts::parse_doc_coverage(source, Language::Go);
+        assert_eq!(stats.total_public, 2, "Should find 2 Go functions");
+        assert_eq!(stats.documented, 1, "Only 1 should have Go doc comment");
+    }
 }

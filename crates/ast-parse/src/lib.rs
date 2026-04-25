@@ -11,6 +11,7 @@ pub struct FunctionComplexity {
     pub end_line: usize,
     pub complexity: u32,
     pub line_count: usize,
+    pub unsafe_count: u32,
 }
 
 /// Result of analyzing a file
@@ -18,6 +19,7 @@ pub struct FunctionComplexity {
 pub struct FileAnalysis {
     pub file: String,
     pub functions: Vec<FunctionComplexity>,
+    pub unsafe_blocks: u32,
 }
 
 /// Parse a Rust source file and extract cyclomatic complexity per function
@@ -31,6 +33,7 @@ pub fn analyze_file(file_path: &str) -> Result<FileAnalysis, String> {
         file: file_path.to_string(),
         source: &source,
         functions: Vec::new(),
+        file_unsafe_count: 0,
     };
 
     visitor.visit_file(&ast);
@@ -38,6 +41,7 @@ pub fn analyze_file(file_path: &str) -> Result<FileAnalysis, String> {
     Ok(FileAnalysis {
         file: file_path.to_string(),
         functions: visitor.functions,
+        unsafe_blocks: visitor.file_unsafe_count,
     })
 }
 
@@ -50,6 +54,7 @@ pub fn analyze_source(source: &str, file_path: &str) -> Result<FileAnalysis, Str
         file: file_path.to_string(),
         source,
         functions: Vec::new(),
+        file_unsafe_count: 0,
     };
 
     visitor.visit_file(&ast);
@@ -57,6 +62,7 @@ pub fn analyze_source(source: &str, file_path: &str) -> Result<FileAnalysis, Str
     Ok(FileAnalysis {
         file: file_path.to_string(),
         functions: visitor.functions,
+        unsafe_blocks: visitor.file_unsafe_count,
     })
 }
 
@@ -64,13 +70,14 @@ struct ComplexityVisitor<'a> {
     file: String,
     source: &'a str,
     functions: Vec<FunctionComplexity>,
+    file_unsafe_count: u32,
 }
 
 impl<'a> Visit<'a> for ComplexityVisitor<'a> {
     fn visit_item_fn(&mut self, node: &'a ItemFn) {
         let name = node.sig.ident.to_string();
         let line = estimate_line(self.source, &name);
-        let mut counter = ComplexityCounter { count: 1 };
+        let mut counter = ComplexityCounter { count: 1, unsafe_count: 0 };
         counter.visit_block(&node.block);
         let line_count = count_lines(&node.block);
 
@@ -84,6 +91,7 @@ impl<'a> Visit<'a> for ComplexityVisitor<'a> {
             end_line,
             complexity: counter.count,
             line_count,
+            unsafe_count: counter.unsafe_count,
         });
     }
 }
@@ -91,12 +99,18 @@ impl<'a> Visit<'a> for ComplexityVisitor<'a> {
 /// Counts decision points that increase cyclomatic complexity
 struct ComplexityCounter {
     count: u32,
+    unsafe_count: u32,
 }
 
 impl<'a> Visit<'a> for ComplexityCounter {
     fn visit_expr_if(&mut self, _node: &'a ExprIf) {
         self.count += 1;
         syn::visit::visit_expr_if(self, _node);
+    }
+
+    fn visit_expr_unsafe(&mut self, _node: &'a syn::ExprUnsafe) {
+        self.unsafe_count += 1;
+        syn::visit::visit_expr_unsafe(self, _node);
     }
 
     fn visit_expr_while(&mut self, _node: &'a ExprWhile) {
