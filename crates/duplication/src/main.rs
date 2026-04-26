@@ -1,7 +1,6 @@
 use clap::Parser;
+use rayon::prelude::*;
 use serde::Serialize;
-use syn::visit::Visit;
-use syn::{Block, Expr, ItemFn, Stmt};
 
 use ast_parse_ts::{fingerprint_similarity, parse_fingerprints_file};
 use quality_common::{find_source_files, truncate};
@@ -64,7 +63,7 @@ struct FunctionSkeleton {
     stmt_count: usize,
 }
 
-const SUPPORTED_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go"];
+const SUPPORTED_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
 
 fn main() {
     let cli = Cli::parse();
@@ -75,43 +74,28 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mut skeletons: Vec<FunctionSkeleton> = Vec::new();
-
-    // Rust: use high-fidelity syn visitor
-    let rust_files: Vec<_> = all_files.iter().filter(|f| f.ends_with(".rs")).cloned().collect();
-    for file_path in &rust_files {
-        let source = match std::fs::read_to_string(file_path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        match syn::parse_file(&source) {
-            Ok(ast) => {
-                let mut visitor = SkeletonVisitor {
-                    file: file_path.clone(),
-                    source: &source,
-                    skeletons: Vec::new(),
-                };
-                visitor.visit_file(&ast);
-                skeletons.extend(visitor.skeletons);
-            }
-            Err(e) => eprintln!("Warning: parse error in {}: {}", file_path, e),
-        }
-    }
-
-    // Other languages: use tree-sitter fingerprints
-    let other_files: Vec<_> = all_files.iter().filter(|f| !f.ends_with(".rs")).cloned().collect();
-    for file_path in &other_files {
-        for fp in parse_fingerprints_file(file_path) {
-            let stmt_count = fp.fingerprint.split(';').count();
-            skeletons.push(FunctionSkeleton {
-                name: format!("{}:{}", fp.file, fp.line),
-                file: fp.file,
-                line: fp.line,
-                pattern: fp.fingerprint,
-                stmt_count,
-            });
-        }
-    }
+    // Single-threaded rayon to reduce memory pressure (prevents OOM on 16GB/32GB systems)
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+    let skeletons: Vec<FunctionSkeleton> = pool.install(|| {
+        all_files
+            .par_iter()
+            .flat_map(|file_path| {
+                parse_fingerprints_file(file_path)
+                    .into_iter()
+                    .map(|fp| {
+                        let stmt_count = fp.fingerprint.split(';').count();
+                        FunctionSkeleton {
+                            name: format!("{}:{}", fp.file, fp.line),
+                            file: fp.file,
+                            line: fp.line,
+                            pattern: fp.fingerprint,
+                            stmt_count,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    });
 
     // Group by pattern similarity
     let groups = find_duplicates(&skeletons, cli.min_lines);
@@ -119,163 +103,6 @@ fn main() {
     match cli.format.as_str() {
         "json" => output_json(&groups),
         _ => output_table(&groups),
-    }
-}
-
-struct SkeletonVisitor<'a> {
-    file: String,
-    source: &'a str,
-    skeletons: Vec<FunctionSkeleton>,
-}
-
-impl<'a> Visit<'a> for SkeletonVisitor<'a> {
-    fn visit_item_fn(&mut self, node: &'a ItemFn) {
-        let name = node.sig.ident.to_string();
-        let line = quality_common::estimate_fn_line(self.source, &name);
-        let pattern = normalize_block(&node.block);
-        let stmt_count = node.block.stmts.len();
-
-        self.skeletons.push(FunctionSkeleton {
-            name,
-            file: self.file.clone(),
-            line,
-            pattern,
-            stmt_count,
-        });
-
-        // Don't recurse into nested functions
-    }
-}
-
-/// Normalize a block to a structural pattern
-fn normalize_block(block: &Block) -> String {
-    let mut pattern = Vec::new();
-    for stmt in &block.stmts {
-        pattern.push(normalize_stmt(stmt));
-    }
-    pattern.join(";")
-}
-
-fn normalize_stmt(stmt: &Stmt) -> String {
-    match stmt {
-        Stmt::Local(local) => {
-            let mut s = "LET".to_string();
-            if local.init.is_some() {
-                s.push_str("=EXPR");
-            }
-            s
-        }
-        Stmt::Item(item) => normalize_item(item),
-        Stmt::Expr(expr, _) => normalize_expr(expr),
-        Stmt::Macro(_) => "MACRO".to_string(),
-    }
-}
-
-fn normalize_item(item: &syn::Item) -> String {
-    match item {
-        syn::Item::Fn(_) => "FN".to_string(),
-        syn::Item::Struct(_) => "STRUCT".to_string(),
-        _ => "ITEM".to_string(),
-    }
-}
-
-fn normalize_binop(op: &syn::BinOp) -> &'static str {
-    match op {
-        // Arithmetic
-        syn::BinOp::Add(_) | syn::BinOp::Sub(_)
-        | syn::BinOp::Mul(_) | syn::BinOp::Div(_) => normalize_arithop(op),
-        // Comparison
-        syn::BinOp::Eq(_) | syn::BinOp::Ne(_)
-        | syn::BinOp::Lt(_) | syn::BinOp::Le(_)
-        | syn::BinOp::Gt(_) | syn::BinOp::Ge(_) => normalize_cmpop(op),
-        // Logical
-        syn::BinOp::And(_) | syn::BinOp::Or(_) => normalize_logicop(op),
-        _ => "OP",
-    }
-}
-
-fn normalize_arithop(op: &syn::BinOp) -> &'static str {
-    match op {
-        syn::BinOp::Add(_) => "+",
-        syn::BinOp::Sub(_) => "-",
-        syn::BinOp::Mul(_) => "*",
-        syn::BinOp::Div(_) => "/",
-        _ => "OP",
-    }
-}
-
-fn normalize_cmpop(op: &syn::BinOp) -> &'static str {
-    match op {
-        syn::BinOp::Eq(_) => "==",
-        syn::BinOp::Ne(_) => "!=",
-        syn::BinOp::Lt(_) => "<",
-        syn::BinOp::Le(_) => "<=",
-        syn::BinOp::Gt(_) => ">",
-        syn::BinOp::Ge(_) => ">=",
-        _ => "OP",
-    }
-}
-
-fn normalize_logicop(op: &syn::BinOp) -> &'static str {
-    match op {
-        syn::BinOp::And(_) => "&&",
-        syn::BinOp::Or(_) => "||",
-        _ => "OP",
-    }
-}
-
-fn normalize_unop(op: &syn::UnOp) -> &'static str {
-    match op {
-        syn::UnOp::Not(_) => "!",
-        syn::UnOp::Neg(_) => "-",
-        _ => "~",
-    }
-}
-
-fn normalize_expr(expr: &Expr) -> String {
-    if let Some(s) = normalize_simple_expr(expr) {
-        return s.to_string();
-    }
-    normalize_complex_expr(expr)
-}
-
-/// Normalize simple expression variants that map to a literal string label.
-/// Uses tag-based lookup: expr_tag maps variant to u8, TAG_TO_LABEL[u8] returns label.
-/// Cyclomatic complexity = 2 (one match in expr_tag, one array lookup).
-fn normalize_simple_expr(expr: &Expr) -> Option<&'static str> {
-    TAG_TO_LABEL[expr_tag(expr) as usize]
-}
-
-/// Numeric tag for each Expr variant.
-fn expr_tag(expr: &Expr) -> u8 {
-    match expr {
-        Expr::If(_) => 1, Expr::Match(_) => 2, Expr::While(_) => 3,
-        Expr::ForLoop(_) => 4, Expr::Loop(_) => 5, Expr::Return(_) => 6,
-        Expr::Break(_) => 7, Expr::Continue(_) => 8, Expr::Block(_) => 9,
-        Expr::Assign(_) => 10, Expr::Lit(_) => 11, Expr::Path(_) => 12,
-        Expr::Closure(_) => 13, Expr::Tuple(_) => 14, Expr::Array(_) => 15,
-        Expr::Index(_) => 16, Expr::Field(_) => 17, _ => 0,
-    }
-}
-
-/// Static lookup: tag -> label. Zero branching at runtime.
-const TAG_TO_LABEL: [Option<&str>; 18] = [
-    None,
-    Some("IF"), Some("MATCH"), Some("WHILE"), Some("FOR"),
-    Some("LOOP"), Some("RETURN"), Some("BREAK"), Some("CONTINUE"),
-    Some("BLOCK"), Some("ASSIGN"), Some("LIT"), Some("PATH"),
-    Some("CLOSURE"), Some("TUPLE"), Some("ARRAY"), Some("INDEX"),
-    Some("FIELD"),
-];
-
-/// Normalize complex expression variants that need sub-expression formatting.
-fn normalize_complex_expr(expr: &Expr) -> String {
-    match expr {
-        Expr::Call(call) => format!("CALL({})", normalize_expr(&call.func)),
-        Expr::MethodCall(mc) => format!("METHOD({})", mc.method),
-        Expr::Binary(bin) => format!("BIN({})", normalize_binop(&bin.op)),
-        Expr::Unary(un) => format!("UNARY({})", normalize_unop(&un.op)),
-        _ => "EXPR".to_string(),
     }
 }
 
@@ -405,184 +232,6 @@ fn output_json(groups: &[DuplicateGroup]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn parse_expr(source: &str) -> Expr {
-        let full = format!("fn _t() {{ {} }}", source);
-        let file: syn::File = syn::parse_str(&full).unwrap();
-        if let syn::Item::Fn(f) = &file.items[0] {
-            if let Stmt::Expr(e, _) = &f.block.stmts[0] {
-                return e.clone();
-            }
-        }
-        panic!("Failed to parse test expression: {}", source);
-    }
-
-    #[test]
-    fn test_normalize_if() {
-        assert_eq!(normalize_expr(&parse_expr("if x { 1 }")), "IF");
-    }
-
-    #[test]
-    fn test_normalize_match() {
-        assert_eq!(normalize_expr(&parse_expr("match x { _ => 1 }")), "MATCH");
-    }
-
-    #[test]
-    fn test_normalize_while() {
-        assert_eq!(normalize_expr(&parse_expr("while x { 1 }")), "WHILE");
-    }
-
-    #[test]
-    fn test_normalize_for() {
-        assert_eq!(normalize_expr(&parse_expr("for x in y { 1 }")), "FOR");
-    }
-
-    #[test]
-    fn test_normalize_loop() {
-        assert_eq!(normalize_expr(&parse_expr("loop { 1 }")), "LOOP");
-    }
-
-    #[test]
-    fn test_normalize_return() {
-        assert_eq!(normalize_expr(&parse_expr("return 1")), "RETURN");
-    }
-
-    #[test]
-    fn test_normalize_break() {
-        assert_eq!(normalize_expr(&parse_expr("break")), "BREAK");
-    }
-
-    #[test]
-    fn test_normalize_continue() {
-        assert_eq!(normalize_expr(&parse_expr("continue")), "CONTINUE");
-    }
-
-    #[test]
-    fn test_normalize_block() {
-        assert_eq!(normalize_expr(&parse_expr("{ 1 }")), "BLOCK");
-    }
-
-    #[test]
-    fn test_normalize_call() {
-        assert_eq!(normalize_expr(&parse_expr("foo(1)")), "CALL(PATH)");
-    }
-
-    #[test]
-    fn test_normalize_method() {
-        assert_eq!(normalize_expr(&parse_expr("x.method()")), "METHOD(method)");
-    }
-
-    #[test]
-    fn test_normalize_assign() {
-        assert_eq!(normalize_expr(&parse_expr("x = 1")), "ASSIGN");
-    }
-
-    #[test]
-    fn test_normalize_binary_ops() {
-        assert_eq!(normalize_expr(&parse_expr("1 + 2")), "BIN(+)");
-        assert_eq!(normalize_expr(&parse_expr("1 - 2")), "BIN(-)");
-        assert_eq!(normalize_expr(&parse_expr("1 * 2")), "BIN(*)");
-        assert_eq!(normalize_expr(&parse_expr("1 / 2")), "BIN(/)");
-        assert_eq!(normalize_expr(&parse_expr("1 == 2")), "BIN(==)");
-        assert_eq!(normalize_expr(&parse_expr("1 != 2")), "BIN(!=)");
-        assert_eq!(normalize_expr(&parse_expr("1 < 2")), "BIN(<)");
-        assert_eq!(normalize_expr(&parse_expr("1 > 2")), "BIN(>)");
-        assert_eq!(normalize_expr(&parse_expr("1 <= 2")), "BIN(<=)");
-        assert_eq!(normalize_expr(&parse_expr("1 >= 2")), "BIN(>=)");
-    }
-
-    #[test]
-    fn test_normalize_logical_ops() {
-        assert_eq!(normalize_expr(&parse_expr("a && b")), "BIN(&&)");
-        assert_eq!(normalize_expr(&parse_expr("a || b")), "BIN(||)");
-    }
-
-    #[test]
-    fn test_normalize_unary() {
-        assert_eq!(normalize_expr(&parse_expr("!x")), "UNARY(!)");
-        assert_eq!(normalize_expr(&parse_expr("-x")), "UNARY(-)");
-    }
-
-    #[test]
-    fn test_normalize_lit() {
-        assert_eq!(normalize_expr(&parse_expr("42")), "LIT");
-        assert_eq!(normalize_expr(&parse_expr("\"hello\"")), "LIT");
-        assert_eq!(normalize_expr(&parse_expr("true")), "LIT");
-    }
-
-    #[test]
-    fn test_normalize_path() {
-        assert_eq!(normalize_expr(&parse_expr("std::mem::size_of::<u8>()")), "CALL(PATH)");
-    }
-
-    #[test]
-    fn test_normalize_closure() {
-        assert_eq!(normalize_expr(&parse_expr("|x| x + 1")), "CLOSURE");
-    }
-
-    #[test]
-    fn test_normalize_tuple() {
-        assert_eq!(normalize_expr(&parse_expr("(1, 2)")), "TUPLE");
-    }
-
-    #[test]
-    fn test_normalize_array() {
-        assert_eq!(normalize_expr(&parse_expr("[1, 2, 3]")), "ARRAY");
-    }
-
-    #[test]
-    fn test_normalize_index() {
-        assert_eq!(normalize_expr(&parse_expr("x[0]")), "INDEX");
-    }
-
-    #[test]
-    fn test_normalize_field() {
-        assert_eq!(normalize_expr(&parse_expr("x.field")), "FIELD");
-    }
-
-    #[test]
-    fn test_normalize_block_expr() {
-        let source = "fn _t() { let x = if y { 1 } else { 2 }; }";
-        let file: syn::File = syn::parse_str(source).unwrap();
-        if let syn::Item::Fn(f) = &file.items[0] {
-            if let Stmt::Local(local) = &f.block.stmts[0] {
-                let init = local.init.as_ref().unwrap();
-                assert_eq!(normalize_expr(&init.expr), "IF");
-            }
-        }
-    }
-
-    #[test]
-    fn test_normalize_stmt_let() {
-        let source = "fn _t() { let x = 1; }";
-        let file: syn::File = syn::parse_str(source).unwrap();
-        if let syn::Item::Fn(f) = &file.items[0] {
-            assert_eq!(normalize_stmt(&f.block.stmts[0]), "LET=EXPR");
-        }
-    }
-
-    #[test]
-    fn test_normalize_stmt_expr() {
-        let source = "fn _t() { foo(); }";
-        let file: syn::File = syn::parse_str(source).unwrap();
-        if let syn::Item::Fn(f) = &file.items[0] {
-            assert_eq!(normalize_stmt(&f.block.stmts[0]), "CALL(PATH)");
-        }
-    }
-
-    #[test]
-    fn test_normalize_block_multi() {
-        let source = r#"fn _t() {
-            let x = 1;
-            if x > 0 { foo(); }
-            x
-        }"#;
-        let file: syn::File = syn::parse_str(source).unwrap();
-        if let syn::Item::Fn(f) = &file.items[0] {
-            let pattern = normalize_block(&f.block);
-            assert_eq!(pattern, "LET=EXPR;IF;PATH");
-        }
-    }
 
     #[test]
     fn test_pattern_similarity_identical() {

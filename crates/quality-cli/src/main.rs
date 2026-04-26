@@ -2,9 +2,10 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::time::Instant;
 
-use ast_parse::{analyze_file, find_coverage, parse_lcov, crap_score};
 use ast_parse_ts::{parse_complexity_file, parse_doc_coverage_file, Language};
-use quality_common::{find_rust_files, find_source_files, ToolResult};
+use quality_common::{crap_score, parse_lcov, CoverageRecord};
+use quality_common::{find_source_files, ToolResult};
+use quality_common::memory::MemoryMonitor;
 
 // ═══════════════════════════════════════════
 // CLI DEFINITION
@@ -224,42 +225,38 @@ struct CheckSummary {
 // CHECKS
 // ═══════════════════════════════════════════
 
-/// Scan all Rust files under `path`, invoking `predicate` on each function.
+/// Scan all source files under `path`, invoking `predicate` on each function.
 /// Returns `(total_functions_count, collected_items)`.
-fn scan_rust_functions<T, F>(path: &str, recursive: bool, mut predicate: F) -> (usize, Vec<T>)
+fn scan_source_functions<T, F>(path: &str, recursive: bool, mut predicate: F) -> (usize, Vec<T>)
 where
-    F: FnMut(&ast_parse::FunctionComplexity) -> Option<T>,
+    F: FnMut(&ast_parse_ts::FunctionInfo) -> Option<T>,
 {
-    let files = find_rust_files(path, recursive);
+    let files = find_source_files(path, recursive, &["rs", "py", "js", "ts", "go", "java", "c", "cpp", "cs", "php"]);
     let mut total = 0;
-    let mut items = Vec::new();
-    for file in &files {
-        if let Ok(analysis) = analyze_file(file) {
-            for func in &analysis.functions {
-                total += 1;
-                if let Some(item) = predicate(func) {
-                    items.push(item);
-                }
+    let mut results = Vec::new();
+    for file in files {
+        let functions = parse_complexity_file(&file);
+        total += functions.len();
+        for func in &functions {
+            if let Some(item) = predicate(func) {
+                results.push(item);
             }
         }
     }
-    (total, items)
+    (total, results)
+}
+
+fn function_coverage(coverage_records: &[CoverageRecord], func_name: &str) -> f64 {
+    coverage_records.iter()
+        .find(|r| r.function == func_name)
+        .map_or(0.0, |r| if r.hits > 0 { 1.0 } else { 0.0 })
 }
 
 fn check_crap(path: &str, recursive: bool, coverage_path: &Option<String>, max_crap: f64) -> CheckResult {
-    let coverage_data: Option<Vec<ast_parse::FileCoverage>> = coverage_path.as_ref().map(|p| parse_lcov(p).unwrap_or_default());
-    let (total, functions) = scan_rust_functions(path, recursive, |func| {
+    let coverage_data: Option<Vec<CoverageRecord>> = coverage_path.as_ref().map(|p| parse_lcov(p));
+    let (total, functions) = scan_source_functions(path, recursive, |func| {
         let cov_pct = if let Some(ref cov_data) = coverage_data {
-            if let Some(cov) = find_coverage(cov_data, &func.file) {
-                let (_, _, func_cov) = cov.range_coverage(func.line, func.end_line);
-                if func_cov > 0.0 || !cov.da_records.is_empty() {
-                    func_cov
-                } else {
-                    cov.coverage_pct()
-                }
-            } else {
-                0.0
-            }
+            function_coverage(cov_data, &func.name)
         } else {
             0.0
         };
@@ -298,7 +295,7 @@ fn check_crap(path: &str, recursive: bool, coverage_path: &Option<String>, max_c
 }
 
 fn check_debt(path: &str, recursive: bool, max_debt: usize) -> CheckResult {
-    let extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"];
+    let extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "cs", "php"];
     let files = find_source_files(path, recursive, &extensions);
 
     let markers = ["TODO", "FIXME", "HACK", "XXX", "BUG"];
@@ -383,7 +380,7 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
     let mut langs_seen: std::collections::HashSet<String> = Default::default();
 
     // Rust files via syn (high-fidelity)
-    let rust_files = find_rust_files(path, recursive);
+    let rust_files = find_source_files(path, recursive, &["rs"]);
     if !rust_files.is_empty() {
         langs_seen.insert("rust".to_string());
     }
@@ -443,7 +440,7 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
 }
 
 fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckResult {
-    let all_exts = ["rs", "py", "js", "ts", "mjs", "tsx", "go"];
+    let all_exts = ["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
     let files = find_source_files(path, recursive, &all_exts);
 
     let mut total = 0usize;
@@ -757,10 +754,14 @@ fn run_tool(
 
 fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no_fail_on_regression: bool) -> i32 {
     use quality_common::*;
-    
+
     use std::time::Instant;
 
     let start = Instant::now();
+
+    // Initialize memory monitor (auto-terminates if memory exceeds safe threshold)
+    let mut memory_monitor = MemoryMonitor::from_env();
+    eprintln!("Memory monitor initialized with limit: {} MB", memory_monitor.max_rss_bytes / 1024 / 1024);
 
     let tools: Vec<(&str, &str, Vec<&str>)> = vec![
         ("debt-scan", "debt", vec!["--recursive", path, "--format", "json"]),
@@ -770,54 +771,39 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
         ("risk-map", "riskmap", vec![path, "--format", "json"]),
         ("duplication", "dupfind", vec!["--recursive", path, "--format", "json"]),
         ("prop-cov", "propcov", vec!["--recursive", path, "--format", "json"]),
+        ("taint-scan", "taint", vec!["--recursive", path, "--format", "json"]),
+        ("fuzz-surface", "fuzz", vec!["--recursive", path, "--format", "json"]),
+        // mutation-test: run with capped mutants and enforced timeout.
+        // Uses scratch workspace + watchdog kill — safe to include in batch.
+        ("mutation-test", "mutate", vec![path, "--max-mutants", "5", "--timeout", "30", "--format", "json"]),
     ];
 
-    // Spawn all tools concurrently (cap at 4 simultaneous to respect CI RAM limits)
-    const MAX_CONCURRENT: usize = 4;
-    let mut handles: Vec<std::sync::mpsc::Receiver<ToolResult>> = Vec::new();
+    // Run tools sequentially to prevent memory exhaustion
+    // Previous concurrent execution (MAX_CONCURRENT=4) caused OOM crashes on 16GB/32GB systems
     let mut results: Vec<ToolResult> = Vec::new();
     for (crate_name, bin_name, args) in &tools {
-        // Throttle: wait if we already have MAX_CONCURRENT running
-        while handles.len() >= MAX_CONCURRENT {
-            let mut done_results = Vec::new();
-            for (i, handle) in handles.iter_mut().enumerate() {
-                if let Ok(result) = handle.try_recv() {
-                    done_results.push((i, result));
-                    break; // check one at a time to avoid busy-wait
-                }
-            }
-            if done_results.is_empty() {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            } else {
-                // Remove completed handles (reverse order to preserve indices)
-                for (i, _) in done_results.iter().rev() {
-                    handles.remove(*i);
-                }
-                // Save the results received during throttling
-                for (_, result) in done_results {
-                    results.push(result);
-                }
-            }
+        eprintln!("Running tool: {}", bin_name);
+
+        // Check memory before starting tool
+        if let Err(usage) = memory_monitor.check() {
+            eprintln!("❌ Memory limit exceeded before running {}. Stopping batch.", bin_name);
+            eprintln!("   Current usage: {} MB", usage.rss_bytes / 1024 / 1024);
+            break;
         }
 
-        let c = crate_name.to_string();
-        let b = bin_name.to_string();
-        let a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let tool_start = Instant::now();
-            let a_refs: Vec<&str> = a.iter().map(|s| s.as_str()).collect();
-            let result = run_tool(&c, &b, &a_refs, tool_start);
-            let _ = tx.send(result);
-        });
-        handles.push(rx);
-    }
+        let tool_start = Instant::now();
+        let result = run_tool(crate_name, bin_name, args, tool_start);
+        let duration_ms = result.duration_ms;
+        results.push(result);
 
-    // Collect remaining results
-    for rx in handles {
-        if let Ok(result) = rx.recv() {
-            results.push(result);
+        // Check memory after tool completion
+        if let Err(usage) = memory_monitor.check() {
+            eprintln!("❌ Memory limit exceeded after running {}. Stopping batch.", bin_name);
+            eprintln!("   Current usage: {} MB", usage.rss_bytes / 1024 / 1024);
+            break;
         }
+
+        eprintln!("✓ Completed: {} ({} ms)", bin_name, duration_ms);
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
@@ -887,7 +873,7 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
                     .to_string(),
             );
             // Detect languages from source files at path
-            let all_exts = ["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go"];
+            let all_exts = ["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
             let mut langs_detected: Vec<String> = find_source_files(path, true, &all_exts)
                 .iter()
                 .map(|f| ast_parse_ts::Language::from_extension(f).to_string())

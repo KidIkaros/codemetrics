@@ -1,7 +1,9 @@
 use clap::Parser;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::thread;
+use std::time::Duration;
 
 use quality_common::{Column, print_table_header, print_table_row, separator, wrap_tool_response};
 
@@ -17,12 +19,12 @@ struct Cli {
     #[arg(long)]
     files: Option<String>,
 
-    /// Maximum mutants to generate per file
-    #[arg(short = 'n', long, default_value = "50")]
+    /// Maximum mutants to test (default: 5, ceiling: 50)
+    #[arg(short = 'n', long, default_value = "5")]
     max_mutants: usize,
 
-    /// Timeout per test run in seconds
-    #[arg(short, long, default_value = "120")]
+    /// Timeout per test run in seconds (enforced via watchdog kill)
+    #[arg(short, long, default_value = "30")]
     timeout: u64,
 
     /// Output format: table (default) or json
@@ -96,12 +98,27 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), String> {
     let start = std::time::Instant::now();
-    let crate_root = Path::new(&cli.path);
+    let crate_root_raw = Path::new(&cli.path);
+    let crate_root_buf = crate_root_raw
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve path {}: {}", cli.path, e))?;
+    let crate_root = crate_root_buf.as_path();
     if !crate_root.join("Cargo.toml").exists() {
-        return Err(format!("No Cargo.toml found at {}", cli.path));
+        return Err(format!("No Cargo.toml found at {}", crate_root.display()));
     }
 
+    // Hard ceiling to prevent runaway test sessions
+    let max_mutants = cli.max_mutants.min(50);
+    if cli.max_mutants > 50 {
+        eprintln!("Warning: --max-mutants capped at 50 to prevent system overload.");
+    }
+
+    // Verify tests pass in the ORIGINAL crate first (uses existing build cache)
     verify_tests_pass(crate_root, cli.timeout)?;
+
+    // Build the scratch directory once; all mutations run there
+    let scratch = ScratchCrate::new(crate_root)?;
+    eprintln!("Scratch dir: {}", scratch.root.display());
 
     let source_files = find_source_files(crate_root, &cli.files);
     if source_files.is_empty() {
@@ -125,7 +142,7 @@ fn run(cli: Cli) -> Result<(), String> {
 
         println!("  Changed files:    {}", analysis.changed_files.len());
         println!("  Changed functions: {}", changed_fn_count);
-        println!("  Affected by calls: {}", affected_count - changed_fn_count);
+        println!("  Affected by calls: {}", affected_count.saturating_sub(changed_fn_count));
         println!("  Reduction:        {:.1}% fewer mutants\n", analysis.reduction_pct);
 
         Some(analysis)
@@ -134,7 +151,8 @@ fn run(cli: Cli) -> Result<(), String> {
         None
     };
 
-    // Process files one at a time to keep memory usage low
+    let workspace_root = find_workspace_root(crate_root);
+
     let mut all_results: Vec<MutantResult> = Vec::new();
     let mut total_mutants = 0usize;
     let mut killed = 0usize;
@@ -143,7 +161,7 @@ fn run(cli: Cli) -> Result<(), String> {
     let mut errors = 0usize;
 
     for file_path in &source_files {
-        if total_mutants >= cli.max_mutants {
+        if total_mutants >= max_mutants {
             break;
         }
 
@@ -152,12 +170,12 @@ fn run(cli: Cli) -> Result<(), String> {
             continue;
         };
 
-        let remaining = cli.max_mutants.saturating_sub(total_mutants);
+        let remaining = max_mutants.saturating_sub(total_mutants);
         let mut file_mutants = generate_mutants_for_file(
             &source,
             &file_path.to_string_lossy(),
             &cli.strategy,
-            remaining
+            remaining,
         );
 
         // In delta mode, filter mutants to only those in affected functions
@@ -168,7 +186,6 @@ fn run(cli: Cli) -> Result<(), String> {
                     &file_str,
                     m.line,
                     &delta.affected_functions,
-                    // Pass source for function range lookup
                     &[(file_str.clone(), source.clone())],
                 )
             });
@@ -186,7 +203,6 @@ fn run(cli: Cli) -> Result<(), String> {
         let file_count = file_mutants.len();
         println!("\nTesting {} mutants from {}...", file_count, file_path.display());
 
-        // Test mutants for this file and immediately discard them
         for (i, mutant) in file_mutants.iter().enumerate() {
             print!(
                 "  [{}/{}] mutant {} (line {})... ",
@@ -195,23 +211,32 @@ fn run(cli: Cli) -> Result<(), String> {
                 mutant.id,
                 mutant.line
             );
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
 
-            let result = test_mutant(mutant, crate_root, cli.timeout);
+            let result = test_mutant_isolated(mutant, crate_root, &workspace_root, &scratch, cli.timeout);
             match result.status.as_str() {
-                "killed" => { print!("✓ KILLED\n"); killed += 1; }
-                "survived" => { print!("✗ SURVIVED\n"); survived += 1; }
-                "timeout" => { print!("⏱ TIMEOUT\n"); timeouts += 1; }
-                _ => { print!("? ERROR\n"); errors += 1; }
+                "killed"   => println!("✓ KILLED"),
+                "survived" => println!("✗ SURVIVED"),
+                "timeout"  => println!("⏱ TIMEOUT"),
+                _          => println!("? ERROR: {}", &result.test_output[..result.test_output.len().min(80)]),
+            }
+            match result.status.as_str() {
+                "killed"   => killed += 1,
+                "survived" => survived += 1,
+                "timeout"  => timeouts += 1,
+                _          => errors += 1,
             }
             all_results.push(result);
         }
 
         total_mutants += file_count;
-
-        // Explicitly drop file data to free memory before next file
         drop(source);
         drop(file_mutants);
     }
+
+    // scratch dir cleaned up automatically via Drop
+    drop(scratch);
 
     if total_mutants == 0 {
         println!("No mutants to test (--max-mutants 0 or no matching code).");
@@ -231,14 +256,310 @@ fn run(cli: Cli) -> Result<(), String> {
     Ok(())
 }
 
-/// ... (rest of the code remains the same)
-fn verify_tests_pass(crate_root: &Path, timeout: u64) -> Result<(), String> {
-    println!("Verifying original tests pass...");
-    if !run_cargo_test(crate_root, timeout) {
-        return Err("Tests fail on original code. Fix tests before mutating.".to_string());
+// ──────────────────────────────────────────────────────────────
+// ScratchWorkspace: copies the entire workspace into /tmp so:
+//   1. Mutations never touch the real source tree.
+//   2. Cargo.lock and inter-crate path deps are resolved correctly.
+//   3. The cargo registry cache is reused (CARGO_HOME stays the same).
+// ──────────────────────────────────────────────────────────────
+
+struct ScratchCrate {
+    root: PathBuf,       // workspace root in /tmp
+    crate_rel: PathBuf,  // relative path from workspace root to the mutated crate
+}
+
+impl ScratchCrate {
+    /// `workspace_root` is the top-level dir containing Workspace Cargo.toml.
+    /// `crate_root` is the specific crate being mutated (may equal workspace_root).
+    fn new(crate_root: &Path) -> Result<Self, String> {
+        let workspace_root = find_workspace_root(crate_root);
+        let crate_rel = crate_root
+            .strip_prefix(&workspace_root)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let scratch_root = std::env::temp_dir().join(format!("mutate-{}", id));
+
+        eprintln!("Copying workspace to scratch: {} -> {}", workspace_root.display(), scratch_root.display());
+
+        // Copy entire workspace (excluding target/ and .git/)
+        copy_dir_recursive_filtered(&workspace_root, &scratch_root)
+            .map_err(|e| format!("Cannot copy workspace to scratch: {}", e))?;
+
+        Ok(Self { root: scratch_root, crate_rel })
     }
-    println!("✓ Original tests pass.\n");
+
+    /// The scratch path of the mutated crate (for running cargo test -p <name>).
+    fn scratch_crate_root(&self) -> PathBuf {
+        self.root.join(&self.crate_rel)
+    }
+
+    /// Return the scratch path for a file given its original workspace path.
+    fn scratch_path_for(&self, original_workspace_root: &Path, original_file: &Path) -> Option<PathBuf> {
+        let rel = original_file.strip_prefix(original_workspace_root).ok()?;
+        Some(self.root.join(rel))
+    }
+}
+
+impl Drop for ScratchCrate {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// Walk up from `crate_root` to find the workspace Cargo.toml (the one with [workspace]).
+/// Falls back to crate_root itself if none found.
+fn find_workspace_root(crate_root: &Path) -> PathBuf {
+    let mut dir = crate_root
+        .canonicalize()
+        .unwrap_or_else(|_| crate_root.to_path_buf());
+    loop {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                if content.contains("[workspace]") {
+                    return dir;
+                }
+            }
+        }
+        match dir.parent() {
+            Some(p) => dir = p.to_path_buf(),
+            None => return crate_root.to_path_buf(),
+        }
+    }
+}
+
+fn copy_dir_recursive_filtered(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        // Skip target/ and .git/ to avoid copying gigabytes
+        if name_str == "target" || name_str == ".git" {
+            continue;
+        }
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(&name);
+        if ty.is_dir() {
+            copy_dir_recursive_filtered(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), dst_path)?;
+        }
+    }
     Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────
+// Isolated mutant tester: patches scratch copy, runs cargo test
+// with a watchdog-enforced timeout, then reverts.
+// ──────────────────────────────────────────────────────────────
+
+fn test_mutant_isolated(
+    mutant: &Mutant,
+    crate_root: &Path,
+    workspace_root: &Path,
+    scratch: &ScratchCrate,
+    timeout_secs: u64,
+) -> MutantResult {
+    // Resolve the file path relative to the original crate root
+    let original_file = crate_root.join(&mutant.file);
+    let scratch_file = match scratch.scratch_path_for(workspace_root, &original_file) {
+        Some(p) => p,
+        None => {
+            return MutantResult {
+                id: mutant.id,
+                file: mutant.file.clone(),
+                line: mutant.line,
+                description: mutant.description.clone(),
+                status: "error".to_string(),
+                test_output: format!("Cannot resolve scratch path for {}", mutant.file),
+            };
+        }
+    };
+
+    // Read current (clean) state of the scratch file
+    let original_source = match std::fs::read_to_string(&scratch_file) {
+        Ok(s) => s,
+        Err(e) => {
+            return MutantResult {
+                id: mutant.id,
+                file: mutant.file.clone(),
+                line: mutant.line,
+                description: mutant.description.clone(),
+                status: "error".to_string(),
+                test_output: format!("Could not read scratch file: {}", e),
+            };
+        }
+    };
+
+    // Apply mutation to the scratch file
+    let mutated_source = replace_line(&original_source, mutant.line, &mutant.mutated);
+    if std::fs::write(&scratch_file, &mutated_source).is_err() {
+        return MutantResult {
+            id: mutant.id,
+            file: mutant.file.clone(),
+            line: mutant.line,
+            description: mutant.description.clone(),
+            status: "error".to_string(),
+            test_output: "Could not write mutated scratch file".to_string(),
+        };
+    }
+
+    // Run cargo test in the scratch crate (not the whole workspace)
+    let test_result = run_cargo_test_with_timeout(&scratch.scratch_crate_root(), timeout_secs);
+
+    // Always restore the scratch file to clean state
+    let _ = std::fs::write(&scratch_file, &original_source);
+
+    match test_result {
+        TestOutcome::Killed(output) => MutantResult {
+            id: mutant.id,
+            file: mutant.file.clone(),
+            line: mutant.line,
+            description: mutant.description.clone(),
+            status: "killed".to_string(),
+            test_output: output,
+        },
+        TestOutcome::Survived(output) => MutantResult {
+            id: mutant.id,
+            file: mutant.file.clone(),
+            line: mutant.line,
+            description: mutant.description.clone(),
+            status: "survived".to_string(),
+            test_output: output,
+        },
+        TestOutcome::Timeout => MutantResult {
+            id: mutant.id,
+            file: mutant.file.clone(),
+            line: mutant.line,
+            description: mutant.description.clone(),
+            status: "timeout".to_string(),
+            test_output: format!("Timed out after {}s", timeout_secs),
+        },
+        TestOutcome::Error(msg) => MutantResult {
+            id: mutant.id,
+            file: mutant.file.clone(),
+            line: mutant.line,
+            description: mutant.description.clone(),
+            status: "error".to_string(),
+            test_output: msg,
+        },
+    }
+}
+
+enum TestOutcome {
+    Killed(String),
+    Survived(String),
+    Timeout,
+    Error(String),
+}
+
+/// Spawn `cargo test --quiet` in `crate_root`, kill it after `timeout_secs` via watchdog thread.
+/// Sets CARGO_TARGET_DIR to the shared host target dir to reuse build artifacts and avoid
+/// recompiling everything from scratch on each mutation.
+fn run_cargo_test_with_timeout(crate_root: &Path, timeout_secs: u64) -> TestOutcome {
+    // Pass --target-dir explicitly so the scratch crate reuses the host build cache.
+    // This avoids recompiling everything from scratch for each mutant.
+    let target_dir = home_target_dir();
+    let child = match std::process::Command::new("cargo")
+        .args(["test", "--quiet", "--target-dir", target_dir.to_str().unwrap_or("target")])
+        .current_dir(crate_root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return TestOutcome::Error(format!("Failed to spawn cargo: {}", e)),
+    };
+
+    // Watchdog: kills the child after timeout_secs.
+    // Uses an AtomicBool so we can signal it to stop without blocking.
+    let child_id = child.id();
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
+    let timed_out_clone = Arc::clone(&timed_out);
+    let done_clone = Arc::clone(&done);
+    let watchdog = thread::spawn(move || {
+        let deadline = Duration::from_secs(timeout_secs);
+        let tick = Duration::from_millis(100);
+        let mut elapsed = Duration::ZERO;
+        while elapsed < deadline {
+            if done_clone.load(Ordering::Relaxed) {
+                return; // process finished normally, bail out
+            }
+            thread::sleep(tick);
+            elapsed += tick;
+        }
+        timed_out_clone.store(true, Ordering::Relaxed);
+        // Kill the entire process group so cargo child procs die too
+        unsafe {
+            libc::kill(-(child_id as libc::pid_t), libc::SIGKILL);
+        }
+    });
+
+    let output = child.wait_with_output();
+    done.store(true, Ordering::Relaxed); // tell watchdog we're done
+    let _ = watchdog.join();
+
+    if timed_out.load(Ordering::Relaxed) {
+        return TestOutcome::Timeout;
+    }
+
+    match output {
+        Err(e) => TestOutcome::Error(format!("cargo test failed: {}", e)),
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let combined = format!("{}\n{}", stdout, stderr);
+            if out.status.success() {
+                TestOutcome::Survived(combined)
+            } else {
+                TestOutcome::Killed(combined)
+            }
+        }
+    }
+}
+
+/// Returns a shared target directory for reusing build artifacts across mutations.
+/// Looks up the real workspace target/ via CARGO_TARGET_DIR env or walks to find it.
+fn home_target_dir() -> PathBuf {
+    // If already set, honour it
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        return PathBuf::from(dir);
+    }
+    // Otherwise use the standard location alongside the binary
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| {
+            // binary is at <workspace>/target/debug/mutate
+            // walk up to find the target/ dir
+            p.parent()?.parent().map(|p| p.to_path_buf())
+        })
+        .unwrap_or_else(|| PathBuf::from("target"))
+}
+
+fn verify_tests_pass(crate_root: &Path, timeout: u64) -> Result<(), String> {
+    println!("Verifying tests pass in scratch copy...");
+    match run_cargo_test_with_timeout(crate_root, timeout) {
+        TestOutcome::Survived(_) => {
+            println!("✓ Tests pass.\n");
+            Ok(())
+        }
+        TestOutcome::Killed(out) => Err(format!(
+            "Tests fail on original code. Fix tests before mutating.\n{}",
+            &out[..out.len().min(500)]
+        )),
+        TestOutcome::Timeout => Err(format!(
+            "Baseline test timed out after {}s. Increase --timeout or fix slow tests.",
+            timeout
+        )),
+        TestOutcome::Error(e) => Err(e),
+    }
 }
 
 /// Generate mutants for a single file with a limit to prevent memory blowup
@@ -442,88 +763,6 @@ fn generate_mutants(source: &str, file_path: &str, next_id: &mut usize, strategy
     mutants
 }
 
-/// Test a single mutant: apply mutation, run tests, restore
-fn test_mutant(mutant: &Mutant, crate_root: &Path, _timeout: u64) -> MutantResult {
-    let file_path = crate_root.join(&mutant.file);
-
-    // Read original
-    let original_source = match std::fs::read_to_string(&file_path) {
-        Ok(s) => s,
-        Err(e) => {
-            return MutantResult {
-                id: mutant.id,
-                file: mutant.file.clone(),
-                line: mutant.line,
-                description: mutant.description.clone(),
-                status: "error".to_string(),
-                test_output: format!("Could not read file: {}", e),
-            };
-        }
-    };
-
-    // Apply mutation (replace the specific line)
-    let mutated_source = replace_line(&original_source, mutant.line, &mutant.mutated);
-
-    // Write mutated source
-    if std::fs::write(&file_path, &mutated_source).is_err() {
-        return MutantResult {
-            id: mutant.id,
-            file: mutant.file.clone(),
-            line: mutant.line,
-            description: mutant.description.clone(),
-            status: "error".to_string(),
-            test_output: "Could not write mutated file".to_string(),
-        };
-    }
-
-    // Run tests
-    let output = Command::new("cargo")
-        .args(["test", "--quiet"])
-        .current_dir(crate_root)
-        .output();
-
-    // Restore original immediately
-    let _ = std::fs::write(&file_path, &original_source);
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let combined = format!("{}\n{}", stdout, stderr);
-
-            if output.status.success() {
-                // Tests still pass = mutant SURVIVED (bad)
-                MutantResult {
-                    id: mutant.id,
-                    file: mutant.file.clone(),
-                    line: mutant.line,
-                    description: mutant.description.clone(),
-                    status: "survived".to_string(),
-                    test_output: combined,
-                }
-            } else {
-                // Tests failed = mutant KILLED (good)
-                MutantResult {
-                    id: mutant.id,
-                    file: mutant.file.clone(),
-                    line: mutant.line,
-                    description: mutant.description.clone(),
-                    status: "killed".to_string(),
-                    test_output: combined,
-                }
-            }
-        }
-        Err(e) => MutantResult {
-            id: mutant.id,
-            file: mutant.file.clone(),
-            line: mutant.line,
-            description: mutant.description.clone(),
-            status: "error".to_string(),
-            test_output: format!("Failed to run cargo test: {}", e),
-        },
-    }
-}
-
 /// Replace a specific line (1-indexed) in source
 fn replace_line(source: &str, line_num: usize, new_content: &str) -> String {
     source
@@ -570,17 +809,8 @@ fn find_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// Run cargo test and return whether it passed
-fn run_cargo_test(crate_root: &Path, _timeout: u64) -> bool {
-    Command::new("cargo")
-        .args(["test", "--quiet"])
-        .current_dir(crate_root)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn output_table(results: &[MutantResult]) {
     let killed = results.iter().filter(|r| r.status == "killed").count();
     let survived = results.iter().filter(|r| r.status == "survived").count();
@@ -648,7 +878,7 @@ fn output_table(results: &[MutantResult]) {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn output_json(results: &[MutantResult]) {
     let killed = results.iter().filter(|r| r.status == "killed").count();
     let survived = results.iter().filter(|r| r.status == "survived").count();

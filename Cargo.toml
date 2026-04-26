@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/quality-common",
-    "crates/ast-parse",
     "crates/ast-parse-ts",
     "crates/crap-metric",
     "crates/mutation-test",

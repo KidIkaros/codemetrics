@@ -1,5 +1,5 @@
 /// Universal AST layer backed by tree-sitter.
-/// Supports Rust, Python, JavaScript, TypeScript, Go.
+/// Supports Rust, Python, JavaScript, TypeScript, Go, C, C++, C#, Java, PHP.
 use std::cell::RefCell;
 use tree_sitter::{Language as TsLanguage, Node, Parser};
 
@@ -15,6 +15,11 @@ pub enum Language {
     JavaScript,
     TypeScript,
     Go,
+    C,
+    Cpp,
+    CSharp,
+    Java,
+    Php,
     Unknown,
 }
 
@@ -28,6 +33,11 @@ impl Language {
             "js" | "mjs" | "cjs" => Language::JavaScript,
             "ts" | "tsx" | "mts" => Language::TypeScript,
             "go" => Language::Go,
+            "c" | "h" => Language::C,
+            "cpp" | "cc" | "cxx" | "hpp" => Language::Cpp,
+            "cs" => Language::CSharp,
+            "java" => Language::Java,
+            "php" => Language::Php,
             _ => Language::Unknown,
         }
     }
@@ -39,6 +49,11 @@ impl Language {
             Language::JavaScript => Some(tree_sitter_javascript::LANGUAGE.into()),
             Language::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             Language::Go => Some(tree_sitter_go::LANGUAGE.into()),
+            Language::C => Some(tree_sitter_c::LANGUAGE.into()),
+            Language::Cpp => Some(tree_sitter_cpp::LANGUAGE.into()),
+            Language::CSharp => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+            Language::Java => Some(tree_sitter_java::LANGUAGE.into()),
+            Language::Php => Some(tree_sitter_php::LANGUAGE_PHP.into()),
             Language::Unknown => None,
         }
     }
@@ -52,6 +67,11 @@ impl std::fmt::Display for Language {
             Language::JavaScript => "javascript",
             Language::TypeScript => "typescript",
             Language::Go => "go",
+            Language::C => "c",
+            Language::Cpp => "cpp",
+            Language::CSharp => "csharp",
+            Language::Java => "java",
+            Language::Php => "php",
             Language::Unknown => "unknown",
         };
         write!(f, "{}", s)
@@ -83,12 +103,75 @@ pub struct DocStats {
 }
 
 impl DocStats {
+    /// Return the documentation coverage as a percentage (0–100).
     pub fn coverage_pct(&self) -> f64 {
         if self.total_public == 0 {
             100.0
         } else {
             self.documented as f64 / self.total_public as f64 * 100.0
         }
+    }
+}
+
+/// A single documentable item found in a source file.
+#[derive(Debug, Clone)]
+pub struct DocItemInfo {
+    pub kind: String,     // e.g. "fn", "struct", "class", "trait", "method"
+    pub name: String,
+    pub line: usize,
+    pub documented: bool,
+}
+
+/// Parse doc coverage and return per-item details for detailed reporting.
+pub fn parse_doc_coverage_items(source: &str, lang: Language) -> (DocStats, Vec<DocItemInfo>) {
+    parse_with_tree(source, lang, |tree| {
+    let source_bytes = source.as_bytes();
+    let mut nodes = Vec::new();
+    collect_public_items(tree.root_node(), lang, source_bytes, &mut nodes);
+
+    let mut stats = DocStats::default();
+    let mut items = Vec::new();
+    for item in nodes {
+        stats.total_public += 1;
+        let line = node_start_line(item);
+        let documented = match lang {
+            Language::Python => {
+                python_fn_has_docstring(item, source_bytes)
+                    || has_doc_comment_before(source, line, lang)
+            }
+            _ => has_doc_comment_before(source, line, lang),
+        };
+        if documented {
+            stats.documented += 1;
+        }
+        // Derive a human-readable kind from the tree-sitter node kind
+        let kind = normalize_doc_kind(item.kind(), lang);
+        let name = if let Some(field) = item.child_by_field_name(function_name_field(lang)) {
+            node_text(field, source_bytes).to_string()
+        } else {
+            node_text(item, source_bytes).to_string()
+        };
+        items.push(DocItemInfo {
+            kind,
+            name: name.trim().to_string(),
+            line,
+            documented,
+        });
+    }
+    (stats, items)
+    })
+}
+
+fn normalize_doc_kind(ts_kind: &str, _lang: Language) -> String {
+    match ts_kind {
+        "function_item" | "function_definition" | "function_declaration" | "function"
+        | "method_definition" | "method_declaration" | "method_signature" | "impl_item"
+        | "function_declarator" | "local_function_statement" => "fn".to_string(),
+        "struct_item" | "struct_specifier" | "class_declaration" | "class_definition"
+        | "struct_declaration" => "struct".to_string(),
+        "enum_item" | "enum_specifier" | "enum_declaration" => "enum".to_string(),
+        "trait_item" | "interface_declaration" | "trait_declaration" => "trait".to_string(),
+        _ => ts_kind.to_string(),
     }
 }
 
@@ -153,6 +236,19 @@ pub fn with_pooled_parser<T>(lang: Language, f: impl FnOnce(&mut Parser) -> T) -
     })
 }
 
+/// Parse `source` with a pooled parser and return the tree, or `None` if parsing fails.
+fn with_tree(source: &str, lang: Language) -> Option<tree_sitter::Tree> {
+    with_pooled_parser(lang, |parser| parser.parse(source, None))
+}
+
+/// Parse `source` and run `f` on the resulting tree, returning `T::default()` on parse failure.
+fn parse_with_tree<T: Default>(source: &str, lang: Language, f: impl FnOnce(tree_sitter::Tree) -> T) -> T {
+    match with_tree(source, lang) {
+        Some(tree) => f(tree),
+        None => T::default(),
+    }
+}
+
 fn node_text<'a>(node: Node<'_>, source: &'a [u8]) -> &'a str {
     node.utf8_text(source).unwrap_or("")
 }
@@ -213,6 +309,57 @@ fn complexity_branch_kinds(lang: Language) -> &'static [&'static str] {
             "select_statement",
             "communication_case",
         ],
+        Language::C => &[
+            "if_statement",
+            "else_clause",
+            "for_statement",
+            "while_statement",
+            "switch_statement",
+            "case_statement",
+            "conditional_expression",
+        ],
+        Language::Cpp => &[
+            "if_statement",
+            "else_clause",
+            "for_statement",
+            "while_statement",
+            "switch_statement",
+            "case_statement",
+            "conditional_expression",
+            "lambda_expression",
+        ],
+        Language::CSharp => &[
+            "if_statement",
+            "else_clause",
+            "for_statement",
+            "foreach_statement",
+            "while_statement",
+            "switch_statement",
+            "switch_section",
+            "conditional_expression",
+            "lambda_expression",
+        ],
+        Language::Java => &[
+            "if_statement",
+            "else_clause",
+            "for_statement",
+            "enhanced_for_statement",
+            "while_statement",
+            "switch_statement",
+            "switch_label",
+            "conditional_expression",
+            "lambda_expression",
+        ],
+        Language::Php => &[
+            "if_statement",
+            "else_clause",
+            "for_statement",
+            "foreach_statement",
+            "while_statement",
+            "switch_statement",
+            "case_statement",
+            "conditional_expression",
+        ],
         Language::Unknown => &[],
     }
 }
@@ -236,6 +383,11 @@ fn function_node_kinds(lang: Language) -> &'static [&'static str] {
             "method_signature",
         ],
         Language::Go => &["function_declaration", "method_declaration"],
+        Language::C => &["function_declarator"],
+        Language::Cpp => &["function_declarator", "lambda_expression"],
+        Language::CSharp => &["method_declaration", "constructor_declaration", "local_function_statement"],
+        Language::Java => &["method_declaration", "constructor_declaration", "lambda_expression"],
+        Language::Php => &["function_definition", "method_declaration"],
         Language::Unknown => &[],
     }
 }
@@ -244,7 +396,8 @@ fn function_node_kinds(lang: Language) -> &'static [&'static str] {
 fn function_name_field(lang: Language) -> &'static str {
     match lang {
         Language::Rust | Language::Python | Language::JavaScript | Language::TypeScript => "name",
-        Language::Go => "name",
+        Language::Go | Language::CSharp | Language::Java | Language::Php => "name",
+        Language::C | Language::Cpp => "declarator",
         Language::Unknown => "name",
     }
 }
@@ -275,12 +428,7 @@ fn collect_functions<'a>(node: Node<'a>, func_kinds: &[&str], out: &mut Vec<Node
 
 /// Parse a source string and return function complexity for all functions.
 pub fn parse_complexity(source: &str, file: &str, lang: Language) -> Vec<FunctionInfo> {
-    with_pooled_parser(lang, |parser| {
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => return vec![],
-    };
-
+    parse_with_tree(source, lang, |tree| {
     let source_bytes = source.as_bytes();
     let func_kinds = function_node_kinds(lang);
     let branch_kinds = complexity_branch_kinds(lang);
@@ -342,11 +490,15 @@ fn has_doc_comment_before(source: &str, line: usize, lang: Language) -> bool {
         return false;
     }
     let lines: Vec<&str> = source.lines().collect();
-    // Look at up to 3 lines above the node start
-    let start = if line >= 3 { line - 3 } else { 0 };
+    // Look at up to 5 lines above the node start (attributes like #[derive] may sit between)
+    let start = if line >= 5 { line - 5 } else { 0 };
     for prev in (start..line - 1).rev() {
         let trimmed = lines.get(prev).map(|l| l.trim()).unwrap_or("");
         if trimmed.is_empty() {
+            continue;
+        }
+        // For Rust, skip attribute lines and keep looking
+        if lang == Language::Rust && trimmed.starts_with("#") {
             continue;
         }
         let is_doc = match lang {
@@ -360,7 +512,7 @@ fn has_doc_comment_before(source: &str, line: usize, lang: Language) -> bool {
                 trimmed.starts_with("/**") || trimmed.starts_with("* ") || trimmed.starts_with("*/")
                     || trimmed.starts_with("//")
             }
-            Language::Go => trimmed.starts_with("//"),
+            Language::Go | Language::C | Language::Cpp | Language::CSharp | Language::Java | Language::Php => trimmed.starts_with("//") || trimmed.starts_with("/*"),
             Language::Unknown => false,
         };
         return is_doc;
@@ -404,6 +556,11 @@ fn public_item_kinds(lang: Language) -> &'static [&'static str] {
             "export_statement",
         ],
         Language::Go => &["function_declaration", "method_declaration", "type_declaration"],
+        Language::C => &["function_declarator", "struct_specifier", "enum_specifier"],
+        Language::Cpp => &["function_declarator", "class_specifier", "struct_specifier", "enum_specifier"],
+        Language::CSharp => &["method_declaration", "class_declaration", "struct_declaration", "interface_declaration"],
+        Language::Java => &["method_declaration", "class_declaration", "interface_declaration", "enum_declaration"],
+        Language::Php => &["function_definition", "class_declaration", "interface_declaration"],
         Language::Unknown => &[],
     }
 }
@@ -445,12 +602,7 @@ fn collect_public_items<'a>(node: Node<'a>, lang: Language, source_bytes: &[u8],
 
 /// Parse doc coverage from source string.
 pub fn parse_doc_coverage(source: &str, lang: Language) -> DocStats {
-    with_pooled_parser(lang, |parser| {
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => return DocStats::default(),
-    };
-
+    parse_with_tree(source, lang, |tree| {
     let source_bytes = source.as_bytes();
     let mut items = Vec::new();
     collect_public_items(tree.root_node(), lang, source_bytes, &mut items);
@@ -472,6 +624,19 @@ pub fn parse_doc_coverage(source: &str, lang: Language) -> DocStats {
     }
     stats
     })
+}
+
+/// Parse doc coverage with per-item details from a file on disk.
+pub fn parse_doc_coverage_items_file(path: &str) -> (DocStats, Vec<DocItemInfo>) {
+    let lang = Language::from_extension(path);
+    if lang == Language::Unknown {
+        return (DocStats::default(), vec![]);
+    }
+    let source = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return (DocStats::default(), vec![]),
+    };
+    parse_doc_coverage_items(&source, lang)
 }
 
 /// Parse doc coverage from a file on disk.
@@ -533,14 +698,8 @@ fn fingerprint_recurse(node: Node<'_>, tokens: &mut Vec<&'static str>, depth: u3
     }
 }
 
-/// Extract structural fingerprints of all functions in a source file.
 pub fn parse_fingerprints(source: &str, file: &str, lang: Language) -> Vec<BlockFingerprint> {
-    with_pooled_parser(lang, |parser| {
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => return vec![],
-    };
-
+    parse_with_tree(source, lang, |tree| {
     let func_kinds = function_node_kinds(lang);
     let mut func_nodes = Vec::new();
     collect_functions(tree.root_node(), func_kinds, &mut func_nodes);
@@ -577,11 +736,7 @@ pub fn parse_fingerprints_file(path: &str) -> Vec<BlockFingerprint> {
 
 /// Extract all identifier names from source (for taint variable detection).
 pub fn parse_identifiers(source: &str, lang: Language) -> Vec<String> {
-    with_pooled_parser(lang, |parser| {
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => return vec![],
-    };
+    parse_with_tree(source, lang, |tree| {
     let source_bytes = source.as_bytes();
     let mut ids = Vec::new();
     collect_node_kind(tree.root_node(), "identifier", source_bytes, &mut ids);
@@ -592,11 +747,7 @@ pub fn parse_identifiers(source: &str, lang: Language) -> Vec<String> {
 
 /// Extract all string literal values from source (for taint sink detection).
 pub fn parse_string_literals(source: &str, lang: Language) -> Vec<String> {
-    with_pooled_parser(lang, |parser| {
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => return vec![],
-    };
+    parse_with_tree(source, lang, |tree| {
     let source_bytes = source.as_bytes();
     let mut strings = Vec::new();
     for kind in &["string_literal", "string", "interpreted_string_literal", "raw_string_literal"] {
@@ -627,6 +778,10 @@ fn import_node_kinds(lang: Language) -> &'static [&'static str] {
         Language::Python => &["import_statement", "import_from_statement"],
         Language::JavaScript | Language::TypeScript => &["import_statement", "call_expression"],
         Language::Go => &["import_declaration", "import_spec"],
+        Language::C | Language::Cpp => &["preproc_include"],
+        Language::CSharp => &["using_directive"],
+        Language::Java => &["import_declaration"],
+        Language::Php => &["include_expression", "require_expression", "use_declaration"],
         Language::Unknown => &[],
     }
 }
@@ -702,18 +857,69 @@ fn extract_import_target(node: Node<'_>, source_bytes: &[u8], lang: Language) ->
             }
             None
         }
+        Language::C | Language::Cpp => {
+            // `#include "header.h"` or `#include <header.h>`
+            let text = node_text(node, source_bytes).trim().to_string();
+            if let Some(start) = text.find('"') {
+                if let Some(end) = text[start + 1..].find('"') {
+                    return Some(text[start + 1..start + 1 + end].to_string());
+                }
+            }
+            if let Some(start) = text.find('<') {
+                if let Some(end) = text[start + 1..].find('>') {
+                    return Some(text[start + 1..start + 1 + end].to_string());
+                }
+            }
+            None
+        }
+        Language::CSharp => {
+            // `using System.Collections.Generic;`
+            let text = node_text(node, source_bytes)
+                .trim_start_matches("using ")
+                .trim_end_matches(';')
+                .trim()
+                .to_string();
+            if !text.is_empty() {
+                return Some(text);
+            }
+            None
+        }
+        Language::Java => {
+            // `import java.util.List;` or `import static java.util.List.*;`
+            let text = node_text(node, source_bytes)
+                .trim_start_matches("import ")
+                .trim_start_matches("static ")
+                .trim_end_matches(';')
+                .trim_end_matches(".*")
+                .trim()
+                .to_string();
+            if !text.is_empty() {
+                return Some(text);
+            }
+            None
+        }
+        Language::Php => {
+            // `use Foo\Bar;` or `include/require "file.php";`
+            let text = node_text(node, source_bytes).trim().to_string();
+            if text.starts_with("use ") {
+                return Some(text[4..].trim_end_matches(';').trim().to_string());
+            }
+            if text.starts_with("include") || text.starts_with("require") {
+                if let Some(start) = text.find('"') {
+                    if let Some(end) = text[start + 1..].find('"') {
+                        return Some(text[start + 1..start + 1 + end].to_string());
+                    }
+                }
+            }
+            None
+        }
         Language::Unknown => None,
     }
 }
 
 /// Parse imports from a source string.
 pub fn parse_imports(source: &str, file: &str, lang: Language) -> Vec<ImportInfo> {
-    with_pooled_parser(lang, |parser| {
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => return vec![],
-    };
-
+    parse_with_tree(source, lang, |tree| {
     let source_bytes = source.as_bytes();
     let import_kinds = import_node_kinds(lang);
     let mut import_nodes = Vec::new();

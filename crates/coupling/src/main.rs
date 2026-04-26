@@ -1,8 +1,10 @@
 use clap::Parser;
+use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use ast_parse_ts::{parse_imports_file, Language};
+use std::path::Path;
+use ast_parse_ts::parse_imports_file;
+use quality_common::find_source_files;
 
 #[derive(Parser)]
 #[command(name = "coupling", about = "Coupling analysis -- module dependency graphs, fan-in/fan-out")]
@@ -59,46 +61,15 @@ fn main() {
         std::process::exit(1);
     };
 
-    // Find all .rs files and map them to module names
-    let mut file_modules: HashMap<String, String> = HashMap::new();
-    let mut module_files: HashMap<String, String> = HashMap::new();
-    find_modules(&src_path, &src_path, &mut file_modules, &mut module_files);
+    // Scan ALL source files via tree-sitter (language-agnostic, bounded parallelism)
+    let dependencies = scan_all_imports(&src_path);
 
-    // Parse workspace Cargo.toml to identify internal crates
-    let internal_crates = find_workspace_crates(&cli.path);
+    // Build module info (no implicit refs in language-agnostic mode)
+    let empty_implicit: HashMap<String, HashSet<String>> = HashMap::new();
+    let modules = build_module_info(&dependencies, &empty_implicit);
 
-    // Parse imports from each module
-    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
-    let mut implicit_refs: HashMap<String, HashSet<String>> = HashMap::new();
-
-    // Collect all known module names for implicit reference detection
-    let known_modules: HashSet<String> = module_files.keys().cloned().collect();
-
-    for (module_name, file_path) in &module_files {
-        let source = match std::fs::read_to_string(file_path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        let imports = extract_imports(&source, module_name, &internal_crates);
-        dependencies.insert(module_name.clone(), imports.clone());
-
-        let implicit = extract_implicit_refs(&source, module_name, &known_modules, &imports);
-        implicit_refs.insert(module_name.clone(), implicit);
-    }
-
-    // Also scan non-Rust source files via tree-sitter
-    scan_multilang_imports(&src_path, &mut dependencies);
-
-    // Build module info
-    let modules = build_module_info(&dependencies, &implicit_refs);
-
-    // Filter by minimum coupling
     let filtered: Vec<_> = if cli.min_coupling > 0 {
-        modules
-            .into_iter()
-            .filter(|m| (m.fan_in + m.fan_out) >= cli.min_coupling)
-            .collect()
+        modules.into_iter().filter(|m| (m.fan_in + m.fan_out) >= cli.min_coupling).collect()
     } else {
         modules
     };
@@ -110,262 +81,49 @@ fn main() {
     }
 }
 
-/// Scan non-Rust source files via tree-sitter and inject their imports into the dependency graph.
-fn scan_multilang_imports(dir: &Path, deps: &mut HashMap<String, HashSet<String>>) {
-    const EXTS: &[&str] = &["py", "pyi", "js", "mjs", "ts", "tsx", "go"];
-    collect_multilang_files(dir, EXTS, deps);
-}
-
-fn collect_multilang_files(dir: &Path, exts: &[&str], deps: &mut HashMap<String, HashSet<String>>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if exts.contains(&ext) {
-                let file_str = path.to_string_lossy().to_string();
-                let lang = Language::from_extension(&file_str);
-                if lang == Language::Unknown { continue; }
-                // Use file path as the module key
-                let module_key = file_str.clone();
-                let import_info = parse_imports_file(&file_str);
+/// Scan all source files via tree-sitter and build dependency graph (parallel).
+fn scan_all_imports(dir: &Path) -> HashMap<String, HashSet<String>> {
+    const EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
+    let files = find_source_files(dir.to_str().unwrap_or(""), true, EXTS);
+    // Single-threaded rayon to reduce memory pressure (prevents OOM on 16GB/32GB systems)
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+    pool.install(|| {
+        files
+            .par_iter()
+            .filter_map(|file_str| {
+                let import_info = parse_imports_file(file_str);
+                let is_rust = file_str.ends_with(".rs");
                 let targets: HashSet<String> = import_info
                     .into_iter()
                     .map(|i| i.imported_module)
                     .filter(|m| !m.is_empty())
+                    .filter(|m| is_workspace_import(m, is_rust))
                     .collect();
-                if !targets.is_empty() {
-                    deps.entry(module_key).or_default().extend(targets);
+                if targets.is_empty() {
+                    None
+                } else {
+                    Some((file_str.clone(), targets))
                 }
-            }
-        } else if path.is_dir() && should_traverse_dir(&path) {
-            collect_multilang_files(&path, exts, deps);
-        }
-    }
+            })
+            .collect()
+    })
 }
 
-/// Convert a file path to a module name relative to the base directory.
-fn module_name_from_path(path: &Path, base: &Path) -> Option<String> {
-    let rel = path.strip_prefix(base).ok()?;
-    let module_name = rel
-        .with_extension("")
-        .to_string_lossy()
-        .replace('/', "::")
-        .replace('\\', "::")
-        .replace("mod", "")
-        .trim_end_matches("::")
-        .to_string();
-    if module_name.is_empty() {
-        None
-    } else {
-        Some(module_name)
+/// Keep only imports that likely reference workspace-local modules.
+fn is_workspace_import(module: &str, is_rust: bool) -> bool {
+    if module.ends_with("::*") {
+        return false; // wildcard imports are not specific module deps
     }
+    if !is_rust {
+        return true; // other languages have less ambiguity
+    }
+    // Rust: keep crate-local paths; skip external crates like clap::Parser, serde::Serialize
+    module.starts_with("crate::")
+        || module.starts_with("self::")
+        || module.starts_with("super::")
+        || !module.contains("::")
 }
 
-/// Returns true if a directory should be traversed (not a build/git/hidden dir).
-fn should_traverse_dir(path: &Path) -> bool {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    name != "target" && name != ".git" && !name.starts_with('.')
-}
-
-fn find_modules(dir: &Path, base: &Path, file_map: &mut HashMap<String, String>, module_map: &mut HashMap<String, String>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() && path.extension().map_or(false, |e| e == "rs") {
-            if let Some(module_name) = module_name_from_path(&path, base) {
-                file_map.insert(path.to_string_lossy().to_string(), module_name.clone());
-                module_map.insert(module_name, path.to_string_lossy().to_string());
-            }
-        } else if path.is_dir() && should_traverse_dir(&path) {
-            find_modules(&path, base, file_map, module_map);
-        }
-    }
-}
-
-/// Parse workspace member crate names from Cargo.toml content.
-fn parse_workspace_members(content: &str) -> HashSet<String> {
-    let mut crates = HashSet::new();
-    if !content.contains("[workspace]") {
-        return crates;
-    }
-    let mut in_members = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("members") {
-            in_members = true;
-            continue;
-        }
-        if in_members {
-            if trimmed == "]" {
-                break;
-            }
-            if let Some(path_str) = trimmed
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"').or(Some(s)))
-            {
-                let path_str = path_str.trim_end_matches('"').trim_end_matches(',');
-                let crate_name = Path::new(path_str)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                if !crate_name.is_empty() {
-                    crates.insert(crate_name);
-                }
-            }
-        }
-    }
-    crates
-}
-
-fn find_workspace_crates(start_path: &str) -> HashSet<String> {
-    let mut current = PathBuf::from(start_path);
-
-    // Walk up to find workspace Cargo.toml
-    loop {
-        let cargo_toml = current.join("Cargo.toml");
-        if cargo_toml.exists() {
-            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-                let crates = parse_workspace_members(&content);
-                if !crates.is_empty() {
-                    return crates;
-                }
-            }
-        }
-        if !current.pop() {
-            break;
-        }
-    }
-
-    HashSet::new()
-}
-
-/// Attempt to extract a cross-crate import from a `use` path.
-/// Returns `Some("crate::<name>")` for external crate imports, or `None`.
-fn extract_cross_crate_import(use_path: &str) -> Option<String> {
-    let first_segment = use_path.split("::").next().unwrap_or("");
-    if !first_segment.is_empty()
-        && !first_segment.starts_with("std")
-        && !first_segment.starts_with("core")
-        && !first_segment.starts_with("alloc")
-        && first_segment != "self"
-        && first_segment != "super"
-    {
-        Some(format!("crate::{}", first_segment))
-    } else {
-        None
-    }
-}
-
-/// Detect implicit module references in source code that aren't covered by `use` statements.
-/// These are direct path references like `super::foo::bar()`, `crate::bar::baz`, or `mod_name::Type`.
-fn extract_implicit_refs(
-    source: &str,
-    current_module: &str,
-    known_modules: &HashSet<String>,
-    explicit_imports: &HashSet<String>,
-) -> HashSet<String> {
-    let mut implicit = HashSet::new();
-    let crate_prefix = current_module.split("::").next().unwrap_or(current_module);
-
-    for line in source.lines() {
-        let trimmed = line.trim();
-        // Skip comments and use statements (already covered)
-        if trimmed.starts_with("//") || trimmed.starts_with("use ") {
-            continue;
-        }
-
-        // Pattern 1: `crate::xxx::` or `crate::xxx` references
-        if let Some(start) = line.find("crate::") {
-            let after = &line[start + 7..];
-            // Extract the next path component: alphanumeric, underscore, colon (for :: separators)
-            let end = after.find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
-                .unwrap_or(after.len());
-            let path = &after[..end];
-            let parts: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
-            if !parts.is_empty() {
-                let dep = format!("{}::{}::...", crate_prefix, parts[0]);
-                if path != crate_prefix && !explicit_imports.contains(&dep.replace("::...", "")) {
-                    implicit.insert(dep);
-                }
-            }
-        }
-
-        // Pattern 2: `super::xxx::` references
-        if let Some(start) = line.find("super::") {
-            let after = &line[start + 7..];
-            let end = after.find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
-                .unwrap_or(after.len());
-            let path = &after[..end];
-            let parts: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
-            if !parts.is_empty() {
-                let dep = format!("{}::super::{}::...", crate_prefix, parts[0]);
-                implicit.insert(dep);
-            }
-        }
-
-        // Pattern 3: Direct `xxx::yyy` where xxx is another known module
-        for module in known_modules {
-            let short = module.split("::").last().unwrap_or(module);
-            let pattern = format!("{}::", short);
-            if line.contains(&pattern) && short != crate_prefix {
-                // Don't flag if it's part of a use statement or already imported
-                let dep_short = format!("{}::{}::...", crate_prefix, short);
-                if !explicit_imports.contains(&dep_short.replace("::...", "")) {
-                    implicit.insert(dep_short);
-                }
-            }
-        }
-    }
-
-    implicit
-}
-
-fn extract_imports(source: &str, current_module: &str, _internal_crates: &HashSet<String>) -> HashSet<String> {
-    let mut imports = HashSet::new();
-    let crate_prefix = current_module.split("::").next().unwrap_or(current_module);
-
-    for line in source.lines() {
-        let trimmed = line.trim();
-
-        // Match `use crate::xxx`, `use super::xxx`, `use self::xxx`
-        if let Some(use_path) = trimmed.strip_prefix("use ") {
-            let use_path = use_path.trim_end_matches(';').trim();
-
-            if use_path.starts_with("crate::") {
-                let module = use_path
-                    .strip_prefix("crate::")
-                    .unwrap_or(use_path)
-                    .split("::")
-                    .next()
-                    .unwrap_or(use_path);
-                if module != crate_prefix {
-                    imports.insert(format!("{}::{}", crate_prefix, module));
-                }
-            } else if let Some(dep) = extract_cross_crate_import(use_path) {
-                imports.insert(dep);
-            }
-        }
-
-        // Match `mod xxx;`
-        if let Some(mod_name) = trimmed.strip_prefix("mod ") {
-            let mod_name = mod_name.trim_end_matches(';').trim();
-            if !mod_name.is_empty() && !mod_name.contains('{') {
-                imports.insert(format!("{}::{}", current_module, mod_name));
-            }
-        }
-    }
-
-    imports
-}
 
 fn build_module_info(
     dependencies: &HashMap<String, HashSet<String>>,

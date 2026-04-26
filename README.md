@@ -1,13 +1,14 @@
 # quality-tools
 
-Code quality metrics for Rust and other languages. Built on `syn` for Rust and `tree-sitter` for universal AST parsing across Python, JavaScript, TypeScript, and Go.
+Code quality metrics for 10+ languages via `tree-sitter`. All analysis is language-agnostic — no compilation required.
 
 ## Crates
 
 | Crate | Binary | Purpose |
 |-------|--------|---------|
-| `ast-parse` | (lib) | Shared AST parsing (syn) -- cyclomatic complexity, lcov coverage parsing |
-| `ast-parse-ts` | (lib) | Universal AST parsing (tree-sitter) -- complexity, doc coverage, fingerprints, imports for Rust/Python/JS/TS/Go |
+| `ast-parse-ts` | (lib) | Universal AST parsing (tree-sitter) -- complexity, doc coverage, fingerprints, imports, identifiers for 10+ languages |
+| `quality-common` | (lib) | Shared utilities -- coverage parsing, CRAP scoring, source file discovery, output formatting |
+| `quality-cli` | `quality` | Unified CLI -- runs all tools in one batch with CI-ready JSON/SARIF output |
 | `crap-metric` | `crap` | CRAP score calculator -- maintenance risk scoring |
 | `mutation-test` | `mutate` | Mutation testing -- evaluate test suite quality |
 | `debt-scan` | `debt` | Technical debt scanner -- TODO/FIXME/HACK tracking with git blame |
@@ -15,26 +16,29 @@ Code quality metrics for Rust and other languages. Built on `syn` for Rust and `
 | `duplication` | `dupfind` | Code duplication -- AST-based structural similarity detection |
 | `coupling` | `coupling` | Coupling analysis -- module dependency graphs, fan-in/fan-out |
 | `risk-map` | `riskmap` | Risk map -- churn × complexity cross-reference (the killer feature) |
+| `taint-scan` | `taint` | Taint analysis -- detect sensitive data flow to sinks |
+| `fuzz-surface` | `fuzz` | Fuzz surface analysis -- unsafe block and harness detection |
+| `prop-cov` | `propcov` | Property test coverage -- detect property-based and unit tests |
 
 ## Multi-Language Support
 
-The `ast-parse-ts` crate uses tree-sitter to provide cross-language metrics. Not all tools apply to every language — some require compilation (CRAP, mutation testing, fuzz surface, prop-cov).
+The `ast-parse-ts` crate uses tree-sitter grammars (pure Rust, no external dependencies) to analyze source files directly — no compilation needed.
 
-| Tool | Rust | Python | JS/TS | Go |
-|------|:----:|:------:|:-----:|:--:|
-| `debt-scan` | ✓ | ✓ | ✓ | ✓ |
-| `taint-scan` | ✓ | ✓ | ✓ | ✓ |
-| `complexity` | ✓ | ✓ | ✓ | ✓ |
-| `doc-coverage` | ✓ | ✓ | ✓ | ✓ |
-| `duplication` | ✓ | ✓ | ✓ | ✓ |
-| `coupling` | ✓ | ✓ | ✓ | ✓ |
-| `risk-map` | ✓ | ✓ | ✓ | ✓ |
-| `crap-metric` | ✓ | — | — | — |
-| `mutation-test` | ✓ | — | — | — |
-| `fuzz-surface` | ✓ | — | — | — |
-| `prop-cov` | ✓ | — | — | — |
+| Tool | Rust | Python | JS/TS | Go | C/C++ | C# | Java | PHP |
+|------|:----:|:------:|:-----:|:--:|:-----:|:--:|:----:|:---:|
+| `debt-scan` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `taint-scan` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `complexity` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `doc-coverage` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `duplication` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `coupling` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `risk-map` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `crap-metric` | ✓ | — | — | — | — | — | — | — |
+| `mutation-test` | ✓ | — | — | — | — | — | — | — |
+| `fuzz-surface` | ✓ | — | — | — | — | — | — | — |
+| `prop-cov` | ✓ | — | — | — | — | — | — | — |
 
-**Note:** For non-Rust languages, `ast-parse-ts` uses tree-sitter grammars (pure Rust, no external dependencies). Rust-specific tools (`crap`, `mutate`, `fuzz`, `propcov`) require `cargo` and are Rust-only by design.
+**Note:** Rust-specific tools (`crap`, `mutate`, `fuzz`, `propcov`) require `cargo` and are Rust-only by design. All other tools run directly on source code.
 
 ## CRAP Metric
 
@@ -131,8 +135,15 @@ cargo build
 # FAT32 target directory (if build path doesn't support exec permissions)
 CARGO_TARGET_DIR=/tmp/quality-tools-build cargo build
 
-# Run tests
+# Run tests (single crate — safe)
 cargo test
+
+# Run tests across the entire workspace without freezing your OS
+# (uses batched compilation to cap peak memory)
+./test.sh
+
+# Ultra-safe mode: one crate at a time, single build job
+./test.sh --safe
 ```
 
 ## Other Tools
@@ -224,6 +235,10 @@ quality uninstall-hooks .
 quality run ./my-project --format json
 # → summary.languages_detected: ["javascript", "python", "rust"]
 ```
+
+## Performance
+
+`ast-parse-ts` maintains a **thread-local parser pool** — tree-sitter `Parser` instances are created once per thread per language and reused across files. Heavy tools (`duplication`, `taint-scan`, `coupling`) use **bounded `rayon` parallelism** (2 threads) for file scanning, and the batch runner (`quality`) caps concurrent tool execution at 4 to respect CI RAM limits.
 
 ## License
 

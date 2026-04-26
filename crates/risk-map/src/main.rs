@@ -3,7 +3,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-use ast_parse::analyze_file;
 use ast_parse_ts::{parse_complexity_file, Language};
 use quality_common::{get_git_churn, Column, print_table_header, print_table_row, separator};
 
@@ -92,7 +91,7 @@ fn run(cli: Cli) -> Result<(), String> {
     Ok(())
 }
 
-const SUPPORTED_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go"];
+const SUPPORTED_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
 
 fn build_file_risks(repo_root: &Path, churn_data: &HashMap<String, u32>) -> Vec<FileRisk> {
     let mut file_risks = Vec::new();
@@ -108,27 +107,17 @@ fn build_file_risks(repo_root: &Path, churn_data: &HashMap<String, u32>) -> Vec<
         let full_path_str = full_path.to_string_lossy().to_string();
         let lang = Language::from_extension(&full_path_str);
 
-        // For Rust, prefer the richer ast-parse (syn) which gives unsafe counts.
-        // For all other languages use ast-parse-ts.
+        let ts_funcs = parse_complexity_file(&full_path_str);
+        let mut risk = build_risk_from_ts(file_path, *churn_count, &ts_funcs, lang);
         if lang == Language::Rust {
-            match analyze_file(&full_path_str) {
-                Ok(analysis) => {
-                    file_risks.push(build_risk_from_analysis(file_path, *churn_count, &analysis));
-                }
-                Err(_) => {
-                    // Fallback to tree-sitter for Rust if syn fails
-                    let ts_funcs = parse_complexity_file(&full_path_str);
-                    file_risks.push(build_risk_from_ts(file_path, *churn_count, &ts_funcs, lang));
-                }
-            }
-        } else {
-            let ts_funcs = parse_complexity_file(&full_path_str);
-            if ts_funcs.is_empty() {
-                file_risks.push(build_churn_only_risk(file_path, *churn_count));
-            } else {
-                file_risks.push(build_risk_from_ts(file_path, *churn_count, &ts_funcs, lang));
-            }
+            let unsafe_count = count_unsafe_blocks(&full_path_str);
+            let effective_complexity = risk.complexity + (unsafe_count * 2);
+            let (risk_score, category) = compute_risk_score(*churn_count, effective_complexity, unsafe_count);
+            risk.risk_score = risk_score;
+            risk.category = category;
+            risk.unsafe_count = unsafe_count;
         }
+        file_risks.push(risk);
     }
     file_risks
 }
@@ -149,22 +138,12 @@ fn build_risk_from_ts(file_path: &str, churn: u32, funcs: &[ast_parse_ts::Functi
     }
 }
 
-fn build_risk_from_analysis(file_path: &str, churn: u32, analysis: &ast_parse::FileAnalysis) -> FileRisk {
-    let total_complexity: u32 = analysis.functions.iter().map(|f| f.complexity).sum();
-    let unsafe_count = analysis.unsafe_blocks;
-    let hot = hot_functions(analysis.functions.iter().map(|f| (f.name.clone(), f.complexity)).collect());
-    let effective_complexity = total_complexity + (unsafe_count * 2);
-    let (risk_score, category) = compute_risk_score(churn, effective_complexity, unsafe_count);
-    FileRisk {
-        file: file_path.to_string(),
-        churn,
-        complexity: total_complexity,
-        function_count: analysis.functions.len() as u32,
-        risk_score,
-        category,
-        unsafe_count,
-        hot_functions: hot,
-    }
+fn count_unsafe_blocks(path: &str) -> u32 {
+    std::fs::read_to_string(path)
+        .map(|content| {
+            content.matches("unsafe {").count() as u32 + content.matches("unsafe(").count() as u32
+        })
+        .unwrap_or(0)
 }
 
 fn hot_functions(mut funcs: Vec<(String, u32)>) -> Vec<String> {
@@ -182,18 +161,6 @@ fn compute_risk_score(churn: u32, effective_complexity: u32, _unsafe_count: u32)
     (risk_score, risk_category(risk_score))
 }
 
-fn build_churn_only_risk(file_path: &str, churn: u32) -> FileRisk {
-    FileRisk {
-        file: file_path.to_string(),
-        churn,
-        complexity: 0,
-        function_count: 0,
-        risk_score: churn.min(100) / 5,
-        category: "CHURN_ONLY".to_string(),
-        unsafe_count: 0,
-        hot_functions: vec![],
-    }
-}
 
 fn risk_category(risk_score: u32) -> String {
     if risk_score >= 70 {

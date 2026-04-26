@@ -1,5 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+
+pub mod memory;
 
 // ═══════════════════════════════════════════
 // HEADLESS API TYPES
@@ -151,11 +153,11 @@ fn should_include_file(path: &Path, extensions: &[&str]) -> bool {
 /// Check whether a directory should be traversed (not a skipped/hidden dir).
 fn should_scan_dir(path: &Path) -> bool {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    !matches!(name.as_ref(), "target" | ".git" | "node_modules") && !name.starts_with('.')
+    !matches!(name.as_ref(), "target" | ".git" | "node_modules" | "fixtures") && !name.starts_with('.')
 }
 
 /// Recursively scan a directory for files with given extensions.
-/// Skips target/, .git/, node_modules/, and hidden directories.
+/// Skips target/, .git/, node_modules/, fixtures/, and hidden directories.
 pub fn scan_dir(dir: &Path, recursive: bool, extensions: &[&str], files: &mut Vec<String>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -252,9 +254,11 @@ pub struct Column {
 }
 
 impl Column {
+    /// Create a left-aligned column.
     pub fn left(header: &'static str, width: usize) -> Self {
         Self { header, width, align_right: false }
     }
+    /// Create a right-aligned column.
     pub fn right(header: &'static str, width: usize) -> Self {
         Self { header, width, align_right: true }
     }
@@ -512,6 +516,7 @@ pub struct SarifLog {
     pub runs: Vec<SarifRun>,
 }
 
+/// A single run (execution) inside a SARIF log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifRun {
     pub tool: SarifTool,
@@ -520,11 +525,13 @@ pub struct SarifRun {
     pub results: Vec<SarifResult>,
 }
 
+/// Tool information inside a SARIF run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifTool {
     pub driver: SarifDriver,
 }
 
+/// Tool driver (the actual scanning tool).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifDriver {
     pub name: String,
@@ -532,6 +539,7 @@ pub struct SarifDriver {
     pub rules: Vec<SarifRule>,
 }
 
+/// A rule that a result can reference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifRule {
     pub id: String,
@@ -545,16 +553,19 @@ pub struct SarifRule {
     pub default_configuration: Option<SarifRuleConfig>,
 }
 
+/// Default severity configuration for a rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifRuleConfig {
     pub level: String,
 }
 
+/// A human-readable message in SARIF output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifMessage {
     pub text: String,
 }
 
+/// Metadata about a single tool invocation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifInvocation {
     pub execution_successful: bool,
@@ -564,6 +575,7 @@ pub struct SarifInvocation {
     pub end_time_utc: Option<String>,
 }
 
+/// One finding / result produced by the tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifResult {
     pub rule_id: String,
@@ -574,11 +586,13 @@ pub struct SarifResult {
     pub locations: Vec<SarifLocation>,
 }
 
+/// A location where a result was found.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifLocation {
     pub physical_location: SarifPhysicalLocation,
 }
 
+/// Physical file location with optional region.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifPhysicalLocation {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -587,11 +601,13 @@ pub struct SarifPhysicalLocation {
     pub region: Option<SarifRegion>,
 }
 
+/// URI reference to an artifact (source file).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifArtifactLocation {
     pub uri: String,
 }
 
+/// A line/column region inside a source file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SarifRegion {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -614,6 +630,7 @@ impl SarifLog {
         }
     }
 
+    /// Append a run to this SARIF log.
     pub fn add_run(&mut self, run: SarifRun) {
         self.runs.push(run);
     }
@@ -698,4 +715,133 @@ fn result_key(result: &SarifResult) -> String {
         })
         .unwrap_or_else(|| result.rule_id.clone());
     location
+}
+
+// ═══════════════════════════════════════════
+// TEST RUNNER TRAIT
+// ═══════════════════════════════════════════
+
+/// Result of a test execution.
+#[derive(Debug, Clone)]
+pub struct TestRunResult {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Trait for language-agnostic test execution.
+pub trait TestRunner: Send + Sync {
+    /// Run tests for the project at the given path.
+    fn run_tests(&self, project_path: &Path, timeout_secs: u64) -> Result<TestRunResult, String>;
+}
+
+/// Rust test runner using `cargo test`.
+pub struct CargoTestRunner;
+
+impl TestRunner for CargoTestRunner {
+    fn run_tests(&self, project_path: &Path, _timeout_secs: u64) -> Result<TestRunResult, String> {
+        let output = std::process::Command::new("cargo")
+            .args(["test", "--quiet"])
+            .current_dir(project_path)
+            .output()
+            .map_err(|e| format!("Failed to run cargo test: {}", e))?;
+        Ok(TestRunResult {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    }
+}
+
+// ═══════════════════════════════════════════
+// COVERAGE / LCOV PARSING (shared across tools)
+// ═══════════════════════════════════════════
+
+/// Parsed coverage record per function.
+#[derive(Debug, Clone, Serialize)]
+pub struct CoverageRecord {
+    pub function: String,
+    pub line: usize,
+    pub hits: usize,
+}
+
+/// Parse an LCOV file into coverage records per function.
+/// Lines look like: `FN:<line>,<name>` followed by `FNDA:<hits>,<name>`.
+pub fn parse_lcov(content: &str) -> Vec<CoverageRecord> {
+    let mut records: std::collections::HashMap<String, CoverageRecord> = std::collections::HashMap::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("FN:") {
+            let rest = &trimmed[3..];
+            if let Some((line_str, name)) = rest.split_once(',') {
+                if let Ok(line_num) = line_str.parse::<usize>() {
+                    records.entry(name.to_string()).or_insert(CoverageRecord {
+                        function: name.to_string(),
+                        line: line_num,
+                        hits: 0,
+                    });
+                }
+            }
+        } else if trimmed.starts_with("FNDA:") {
+            let rest = &trimmed[5..];
+            if let Some((hits_str, name)) = rest.split_once(',') {
+                if let Ok(hits) = hits_str.parse::<usize>() {
+                    if let Some(rec) = records.get_mut(name) {
+                        rec.hits += hits;
+                    } else {
+                        records.insert(name.to_string(), CoverageRecord {
+                            function: name.to_string(),
+                            line: 0,
+                            hits,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    records.into_values().collect()
+}
+
+/// Find an LCOV coverage file in the project root (common names).
+pub fn find_lcov_file(project_path: &Path) -> Option<PathBuf> {
+    for name in ["lcov.info", "coverage.lcov", "target/coverage/lcov.info"] {
+        let path = project_path.join(name);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Try to find an LCOV file under the given project path.
+pub fn find_coverage(project_path: &Path) -> Option<Vec<CoverageRecord>> {
+    let lcov = find_lcov_file(project_path)?;
+    let content = std::fs::read_to_string(&lcov).ok()?;
+    Some(parse_lcov(&content))
+}
+
+// ═══════════════════════════════════════════
+// CRAP SCORE UTILITIES (shared across tools)
+// ═══════════════════════════════════════════
+
+/// Calculate CRAP score from complexity and test-coverage ratio.
+/// `covered_ratio` is hits / total_runs (0.0–1.0).
+pub fn crap_score(complexity: u32, covered_ratio: f64) -> f64 {
+    let comp = complexity as f64;
+    let cov = covered_ratio.clamp(0.0, 1.0);
+    comp.powf(2.0) * (1.0 - cov).powf(3.0) + comp
+}
+
+/// Bucket a CRAP score into a category.
+pub fn crap_category(score: f64) -> &'static str {
+    if score > 30.0 {
+        "crappy"
+    } else if score > 20.0 {
+        "acceptable"
+    } else if score > 10.0 {
+        "good"
+    } else {
+        "excellent"
+    }
 }

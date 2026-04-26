@@ -32,13 +32,37 @@ export RUST_TEST_THREADS="${MAX_TEST_THREADS}"
 
 # If --workspace is requested (or no args), run in batches to avoid OOM spike
 # from compiling all crates simultaneously.
+if [[ "$*" == *"--safe"* ]]; then
+    echo "Safe mode: testing ONE crate at a time with CARGO_BUILD_JOBS=1..."
+    export CARGO_BUILD_JOBS=1
+    export RUST_TEST_THREADS=1
+    ALL_CRATES=(
+        quality-common ast-parse ast-parse-ts quality-server quality-cli
+        debt-scan doc-coverage crap-metric coupling risk-map
+        duplication taint-scan fuzz-surface mutation-test prop-cov
+    )
+    FAILED=0
+    for crate in "${ALL_CRATES[@]}"; do
+        echo ""
+        echo "==> crate: $crate"
+        if ! cargo test -p "$crate" -- --test-threads=1; then
+            FAILED=1
+        fi
+    done
+    exit $FAILED
+fi
+
 if [[ $# -eq 0 ]] || [[ "$*" == *"--workspace"* ]]; then
     echo "Running tests in batches (avoids peak memory from --workspace compilation)..."
     BATCHES=(
-        "-p quality-common -p ast-parse -p quality-cli -p quality-server"
-        "-p debt-scan -p doc-coverage -p crap-metric"
-        "-p coupling -p risk-map -p duplication"
+        "-p quality-common"
+        "-p ast-parse -p ast-parse-ts"
+        "-p quality-server -p quality-cli"
+        "-p debt-scan -p doc-coverage"
+        "-p crap-metric -p coupling"
+        "-p risk-map -p duplication"
         "-p taint-scan -p fuzz-surface"
+        "-p mutation-test -p prop-cov"
     )
     FAILED=0
     for batch in "${BATCHES[@]}"; do

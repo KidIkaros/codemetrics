@@ -1,11 +1,7 @@
 use clap::Parser;
 use serde::Serialize;
-use syn::visit::Visit;
-use syn::{
-    ImplItemFn, ItemEnum, ItemFn, ItemStruct, ItemTrait, Visibility,
-};
 
-use ast_parse_ts::{parse_doc_coverage_file, Language};
+use ast_parse_ts::{parse_doc_coverage_items_file, Language};
 use quality_common::{find_source_files, Column, print_table_header, print_table_row, separator};
 
 #[derive(Parser)]
@@ -61,12 +57,11 @@ struct KindBreakdown {
     impl_fns: (usize, usize),
 }
 
-const ALL_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go"];
+const ALL_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
 
 fn main() {
     let cli = Cli::parse();
 
-    // Collect all supported source files
     let all_files = find_source_files(&cli.path, cli.recursive, ALL_EXTS);
     if all_files.is_empty() {
         eprintln!("No supported source files found at {}", cli.path);
@@ -75,49 +70,38 @@ fn main() {
 
     let mut all_items: Vec<DocItem> = Vec::new();
 
-    // Process Rust files with the high-fidelity syn visitor
-    let rust_files: Vec<_> = all_files.iter().filter(|f| f.ends_with(".rs")).cloned().collect();
-    for file_path in &rust_files {
-        let source = match std::fs::read_to_string(file_path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        match syn::parse_file(&source) {
-            Ok(ast) => {
-                let mut visitor = DocVisitor {
-                    file: file_path.clone(),
-                    source: &source,
-                    items: Vec::new(),
-                };
-                visitor.visit_file(&ast);
-                all_items.extend(visitor.items);
-            }
-            Err(e) => eprintln!("Warning: parse error in {}: {}", file_path, e),
-        }
-    }
-
-    // Process non-Rust files via tree-sitter
-    let other_files: Vec<_> = all_files.iter().filter(|f| !f.ends_with(".rs")).cloned().collect();
-    for file_path in &other_files {
+    for file_path in &all_files {
         let lang = Language::from_extension(file_path);
         if lang == Language::Unknown { continue; }
-        let stats = parse_doc_coverage_file(file_path);
-        for _ in 0..stats.total_public {
+        let (stats, items) = parse_doc_coverage_items_file(file_path);
+        for info in items {
             all_items.push(DocItem {
-                kind: lang.to_string(),
-                name: String::new(),
+                kind: info.kind,
+                name: info.name,
                 public: true,
-                documented: false,
+                documented: info.documented,
                 file: file_path.clone(),
-                line: 0,
+                line: info.line,
             });
         }
-        // Mark `documented` count items as documented
-        for item in all_items.iter_mut()
-            .filter(|i| i.file == *file_path)
-            .take(stats.documented)
-        {
-            item.documented = true;
+        // If parser returned zero items but stats say there are some, fall back to generic items
+        if all_items.iter().filter(|i| i.file == *file_path).count() < stats.total_public {
+            for _ in 0..stats.total_public {
+                all_items.push(DocItem {
+                    kind: lang.to_string(),
+                    name: String::new(),
+                    public: true,
+                    documented: false,
+                    file: file_path.clone(),
+                    line: 0,
+                });
+            }
+            for item in all_items.iter_mut()
+                .filter(|i| i.file == *file_path && i.name.is_empty())
+                .take(stats.documented)
+            {
+                item.documented = true;
+            }
         }
     }
 
@@ -132,138 +116,6 @@ fn main() {
                 }
             }
         }
-    }
-}
-
-struct DocVisitor<'a> {
-    file: String,
-    source: &'a str,
-    items: Vec<DocItem>,
-}
-
-impl<'a> DocVisitor<'a> {
-    fn is_public(vis: &Visibility) -> bool {
-        matches!(vis, Visibility::Public(_))
-    }
-
-    fn has_doc_comment(attrs: &[syn::Attribute]) -> bool {
-        attrs.iter().any(|attr| {
-            attr.path().is_ident("doc")
-        })
-    }
-
-    fn estimate_line(&self, name: &str) -> usize {
-        let pattern = format!("fn {}", name);
-        for (i, line) in self.source.lines().enumerate() {
-            if line.contains(&pattern) {
-                return i + 1;
-            }
-        }
-        let pattern = format!("struct {}", name);
-        for (i, line) in self.source.lines().enumerate() {
-            if line.contains(&pattern) {
-                return i + 1;
-            }
-        }
-        let pattern = format!("enum {}", name);
-        for (i, line) in self.source.lines().enumerate() {
-            if line.contains(&pattern) {
-                return i + 1;
-            }
-        }
-        1
-    }
-}
-
-impl<'a> Visit<'a> for DocVisitor<'a> {
-    fn visit_item_fn(&mut self, node: &'a ItemFn) {
-        let name = node.sig.ident.to_string();
-        let public = Self::is_public(&node.vis);
-        let documented = Self::has_doc_comment(&node.attrs);
-        let line = self.estimate_line(&name);
-
-        self.items.push(DocItem {
-            kind: "fn".to_string(),
-            name,
-            public,
-            documented,
-            file: self.file.clone(),
-            line,
-        });
-
-        syn::visit::visit_item_fn(self, node);
-    }
-
-    fn visit_item_struct(&mut self, node: &'a ItemStruct) {
-        let name = node.ident.to_string();
-        let public = Self::is_public(&node.vis);
-        let documented = Self::has_doc_comment(&node.attrs);
-        let line = self.estimate_line(&name);
-
-        self.items.push(DocItem {
-            kind: "struct".to_string(),
-            name,
-            public,
-            documented,
-            file: self.file.clone(),
-            line,
-        });
-
-        syn::visit::visit_item_struct(self, node);
-    }
-
-    fn visit_item_enum(&mut self, node: &'a ItemEnum) {
-        let name = node.ident.to_string();
-        let public = Self::is_public(&node.vis);
-        let documented = Self::has_doc_comment(&node.attrs);
-        let line = self.estimate_line(&name);
-
-        self.items.push(DocItem {
-            kind: "enum".to_string(),
-            name,
-            public,
-            documented,
-            file: self.file.clone(),
-            line,
-        });
-
-        syn::visit::visit_item_enum(self, node);
-    }
-
-    fn visit_item_trait(&mut self, node: &'a ItemTrait) {
-        let name = node.ident.to_string();
-        let public = Self::is_public(&node.vis);
-        let documented = Self::has_doc_comment(&node.attrs);
-        let line = self.estimate_line(&name);
-
-        self.items.push(DocItem {
-            kind: "trait".to_string(),
-            name,
-            public,
-            documented,
-            file: self.file.clone(),
-            line,
-        });
-
-        syn::visit::visit_item_trait(self, node);
-    }
-
-    fn visit_impl_item_fn(&mut self, node: &'a ImplItemFn) {
-        let name = node.sig.ident.to_string();
-        let public = Self::is_public(&node.vis);
-        let documented = Self::has_doc_comment(&node.attrs);
-        let line = self.estimate_line(&name);
-
-        self.items.push(DocItem {
-            kind: "impl_fn".to_string(),
-            name,
-            public,
-            documented,
-            file: self.file.clone(),
-            line,
-        });
-
-        syn::visit::visit_impl_item_fn(self, node);
     }
 }
 

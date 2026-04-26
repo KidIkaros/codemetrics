@@ -2,6 +2,7 @@ use clap::Parser;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use ast_parse_ts::parse_complexity;
 use quality_common::{Column, print_table_header, print_table_row, separator, truncate};
 
 #[derive(Parser)]
@@ -158,11 +159,15 @@ fn analyze_file(source: &str, file_path: &Path, harnesses: &HashSet<String>) -> 
             fn_sig.push(' ');
             fn_sig.push_str(trimmed);
             brace_depth += trimmed.matches('{').count();
-            brace_depth -= trimmed.matches('}').count();
+            brace_depth = brace_depth.saturating_sub(trimmed.matches('}').count());
 
             if brace_depth == 0 && trimmed.contains('}') {
                 // End of function - process the signature
-                if let Some(f) = parse_fn_sig(&fn_sig, &file_str, fn_start_line, harnesses) {
+                if let Some(mut f) = parse_fn_sig(&fn_sig, &file_str, fn_start_line, harnesses) {
+                    f.complexity = parse_complexity(source, &file_str, ast_parse_ts::Language::Rust)
+                        .into_iter()
+                        .find(|func| func.name == f.name)
+                        .map_or(10, |func| func.complexity);
                     functions.push(f);
                 }
                 in_fn = false;

@@ -2,7 +2,8 @@ use clap::Parser;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use quality_common::{Column, print_table_header, print_table_row, separator, truncate};
+use ast_parse_ts::Language;
+use quality_common::{Column, find_source_files, print_table_header, print_table_row, separator, truncate};
 
 #[derive(Parser)]
 #[command(name = "propcov", about = "Property-based testing coverage — scan for proptest/quickcheck macros and calculate coverage")]
@@ -71,26 +72,34 @@ fn main() {
     }
 }
 
+const PROP_COV_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "java", "cs", "php"];
+
 fn run(cli: Cli) -> Result<(), String> {
     let target_path = Path::new(&cli.path);
 
     let source_files = if target_path.is_dir() {
-        find_rs_files(target_path, cli.recursive, cli.only_tests)
-    } else if target_path.is_file() && target_path.extension().map_or(false, |e| e == "rs") {
-        vec![target_path.to_path_buf()]
+        find_source_files(cli.path.as_str(), cli.recursive, PROP_COV_EXTS)
+            .into_iter()
+            .map(PathBuf::from)
+            .filter(|p| !cli.only_tests || is_test_file(p))
+            .collect()
+    } else if target_path.is_file() {
+        let ext = target_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if PROP_COV_EXTS.contains(&ext) {
+            vec![target_path.to_path_buf()]
+        } else {
+            return Err(format!("Unsupported file type: {}", cli.path));
+        }
     } else {
-        return Err(format!("No Rust source files found at {}", cli.path));
+        return Err(format!("No source files found at {}", cli.path));
     };
 
     if source_files.is_empty() {
-        return Err("No .rs files found to analyze.".to_string());
+        return Err("No supported source files found to analyze.".to_string());
     }
 
-    // First pass: collect all property tests
     let mut all_property_tests: Vec<PropertyTest> = Vec::new();
-    // Track unit tests to know total test count
     let mut total_unit_tests = 0usize;
-    // Track which functions are covered by property tests
     let mut function_coverage: HashMap<String, FunctionCoverage> = HashMap::new();
 
     for file_path in &source_files {
@@ -100,7 +109,8 @@ fn run(cli: Cli) -> Result<(), String> {
         };
 
         let file_str = file_path.to_string_lossy().to_string();
-        let (props, units, funcs) = analyze_file(&source, &file_str);
+        let lang = Language::from_extension(&file_str);
+        let (props, units, funcs) = analyze_file(&source, &file_str, lang);
         all_property_tests.extend(props);
         total_unit_tests += units;
 
@@ -151,6 +161,20 @@ fn run(cli: Cli) -> Result<(), String> {
 fn analyze_file(
     source: &str,
     file: &str,
+    lang: Language,
+) -> (Vec<PropertyTest>, usize, HashMap<String, FunctionCoverage>) {
+    match lang {
+        Language::Rust => analyze_file_rust(source, file),
+        Language::Python => analyze_file_python(source, file),
+        Language::JavaScript | Language::TypeScript => analyze_file_js(source, file),
+        Language::Go => analyze_file_go(source, file),
+        _ => (Vec::new(), 0, HashMap::new()),
+    }
+}
+
+fn analyze_file_rust(
+    source: &str,
+    file: &str,
 ) -> (Vec<PropertyTest>, usize, HashMap<String, FunctionCoverage>) {
     let mut property_tests = Vec::new();
     let mut unit_tests = 0usize;
@@ -161,24 +185,20 @@ fn analyze_file(
         line_num += 1;
         let trimmed = line.trim();
 
-        // Count unit tests
         if trimmed.starts_with("#[test]") || trimmed.contains("# [ test ]") {
             unit_tests += 1;
         }
 
-        // Detect proptest! macro blocks
         if trimmed.contains("proptest!") {
             let props = extract_proptest_names(line, line_num, file);
             property_tests.extend(props);
         }
 
-        // Detect quickcheck! or #[quickcheck] attribute
-        if trimmed.contains("quickcheck!") || trimmed.contains("# [ quickcheck ]") {
+        if trimmed.contains("quickcheck!") || trimmed.contains("#[quickcheck]") || trimmed.contains("# [ quickcheck ]") {
             let props = extract_quickcheck_names(line, line_num, file);
             property_tests.extend(props);
         }
 
-        // Detect #[test] fn with prop_assert or strategy patterns
         if trimmed.starts_with("fn ") && trimmed.contains("prop") {
             let fn_name = extract_fn_name(trimmed);
             if let Some(name) = fn_name {
@@ -193,7 +213,6 @@ fn analyze_file(
             }
         }
 
-        // Track function definitions for coverage mapping
         if trimmed.starts_with("fn ") || trimmed.starts_with("pub fn ") {
             if let Some(name) = extract_fn_name(trimmed) {
                 functions.insert(
@@ -203,20 +222,190 @@ fn analyze_file(
                         file: file.to_string(),
                         line: line_num,
                         has_property_test: false,
-                        has_unit_test: unit_tests > 0 && line_num > 0, // simplistic heuristic
-                        property_tests: vec![],
+                        has_unit_test: false,
+                        property_tests: Vec::new(),
                     },
                 );
             }
         }
     }
 
-    // Map property tests to functions they test
-    for pt in &mut property_tests {
+    for pt in &property_tests {
         for func_name in &pt.functions_tested {
             if let Some(func) = functions.get_mut(func_name) {
                 func.has_property_test = true;
                 func.property_tests.push(pt.name.clone());
+            }
+        }
+    }
+
+    for (_name, func) in functions.iter_mut() {
+        if unit_tests > 0 {
+            func.has_unit_test = true;
+        }
+    }
+
+    (property_tests, unit_tests, functions)
+}
+
+fn analyze_file_python(
+    source: &str,
+    file: &str,
+) -> (Vec<PropertyTest>, usize, HashMap<String, FunctionCoverage>) {
+    let mut property_tests = Vec::new();
+    let mut unit_tests = 0usize;
+    let mut functions = HashMap::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("def test_") || trimmed.starts_with("async def test_") {
+            unit_tests += 1;
+            if let Some(name) = extract_python_fn_name(trimmed) {
+                functions.entry(name.clone()).or_insert(FunctionCoverage {
+                    name,
+                    file: file.to_string(),
+                    line: line_num,
+                    has_property_test: false,
+                    has_unit_test: true,
+                    property_tests: Vec::new(),
+                });
+            }
+        }
+
+        if trimmed.contains("@given") || trimmed.contains("@hypothesis.given") {
+            let next_line = source.lines().nth(line_num);
+            if let Some(def_line) = next_line {
+                if let Some(name) = extract_python_fn_name(def_line.trim()) {
+                    property_tests.push(PropertyTest {
+                        name: name.clone(),
+                        file: file.to_string(),
+                        line: line_num + 1,
+                        framework: "hypothesis".to_string(),
+                        functions_tested: vec![name.clone()],
+                    });
+                    if let Some(func) = functions.get_mut(&name) {
+                        func.has_property_test = true;
+                        func.property_tests.push(name.clone());
+                    }
+                }
+            }
+        }
+
+        if trimmed.starts_with("def ") {
+            if let Some(name) = extract_python_fn_name(trimmed) {
+                functions.entry(name.clone()).or_insert(FunctionCoverage {
+                    name,
+                    file: file.to_string(),
+                    line: line_num,
+                    has_property_test: false,
+                    has_unit_test: false,
+                    property_tests: Vec::new(),
+                });
+            }
+        }
+    }
+
+    (property_tests, unit_tests, functions)
+}
+
+fn analyze_file_js(
+    source: &str,
+    file: &str,
+) -> (Vec<PropertyTest>, usize, HashMap<String, FunctionCoverage>) {
+    let mut property_tests = Vec::new();
+    let mut unit_tests = 0usize;
+    let mut functions = HashMap::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("it(") || trimmed.starts_with("test(") || trimmed.starts_with("describe(") {
+            unit_tests += 1;
+        }
+
+        if trimmed.contains("fc.assert") || trimmed.contains("fastCheck") || trimmed.contains("property(") {
+            let fn_name = if trimmed.contains("function ") {
+                trimmed.split("function ").nth(1).and_then(|s| s.split(|c: char| c == '(' || c.is_whitespace()).next()).map(|s| s.to_string())
+            } else if trimmed.contains("const ") && trimmed.contains("=") {
+                trimmed.split("const ").nth(1).and_then(|s| s.split(|c: char| c == '=' || c.is_whitespace()).next()).map(|s| s.to_string())
+            } else {
+                None
+            };
+            if let Some(name) = fn_name {
+                property_tests.push(PropertyTest {
+                    name: name.clone(),
+                    file: file.to_string(),
+                    line: line_num,
+                    framework: "fast-check".to_string(),
+                    functions_tested: vec![name.clone()],
+                });
+            }
+        }
+
+        if trimmed.starts_with("function ") || (trimmed.contains("const ") && trimmed.contains("=>")) {
+            let fn_name = if trimmed.starts_with("function ") {
+                trimmed.split("function ").nth(1).and_then(|s| s.split(|c: char| c == '(' || c.is_whitespace()).next()).map(|s| s.to_string())
+            } else {
+                trimmed.split("const ").nth(1).and_then(|s| s.split(|c: char| c == '=' || c.is_whitespace()).next()).map(|s| s.to_string())
+            };
+            if let Some(name) = fn_name {
+                functions.insert(name.clone(), FunctionCoverage {
+                    name,
+                    file: file.to_string(),
+                    line: line_num,
+                    has_property_test: false,
+                    has_unit_test: false,
+                    property_tests: Vec::new(),
+                });
+            }
+        }
+    }
+
+    (property_tests, unit_tests, functions)
+}
+
+fn analyze_file_go(
+    source: &str,
+    file: &str,
+) -> (Vec<PropertyTest>, usize, HashMap<String, FunctionCoverage>) {
+    let property_tests = Vec::new();
+    let mut unit_tests = 0usize;
+    let mut functions = HashMap::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("func Test") {
+            unit_tests += 1;
+            if let Some(name) = extract_go_fn_name(trimmed) {
+                functions.entry(name.clone()).or_insert(FunctionCoverage {
+                    name,
+                    file: file.to_string(),
+                    line: line_num,
+                    has_property_test: false,
+                    has_unit_test: true,
+                    property_tests: Vec::new(),
+                });
+            }
+        }
+
+        if trimmed.starts_with("func ") {
+            if let Some(name) = extract_go_fn_name(trimmed) {
+                functions.entry(name.clone()).or_insert(FunctionCoverage {
+                    name,
+                    file: file.to_string(),
+                    line: line_num,
+                    has_property_test: false,
+                    has_unit_test: false,
+                    property_tests: Vec::new(),
+                });
             }
         }
     }
@@ -226,9 +415,6 @@ fn analyze_file(
 
 fn extract_proptest_names(line: &str, line_num: usize, file: &str) -> Vec<PropertyTest> {
     let mut tests = Vec::new();
-    // Heuristic: extract function calls within proptest! blocks
-    // proptest!(|(x in 0..10)| { my_function(x) });
-    // Look for identifiers that look like function calls
     for word in line.split(|c: char| !c.is_alphanumeric() && c != '_') {
         if word.len() > 3 && !is_keyword(word) {
             tests.push(PropertyTest {
@@ -285,32 +471,27 @@ fn is_keyword(word: &str) -> bool {
     keywords.contains(word.to_lowercase().as_str())
 }
 
-fn find_rs_files(dir: &Path, recursive: bool, only_tests: bool) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |e| e == "rs") {
-                if !only_tests || is_test_file(&path) {
-                    files.push(path);
-                }
-            } else if recursive && path.is_dir() {
-                // Skip target directory
-                if path.file_name().map_or(true, |n| n != "target") {
-                    files.extend(find_rs_files(&path, recursive, only_tests));
-                }
-            }
-        }
-    }
-    files
+fn extract_python_fn_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let after_def = trimmed.strip_prefix("def ")?;
+    let name = after_def.split(|c: char| c == '(' || c.is_whitespace()).next()?;
+    if name.is_empty() { None } else { Some(name.to_string()) }
+}
+
+fn extract_go_fn_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let after_func = trimmed.strip_prefix("func ")?;
+    let name = after_func.split(|c: char| c == '(' || c.is_whitespace()).next()?;
+    if name.is_empty() { None } else { Some(name.to_string()) }
 }
 
 fn is_test_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     path_str.contains("/tests/") ||
     path_str.contains("\\tests\\") ||
-    path_str.ends_with("_test.rs") ||
-    path_str.ends_with("_tests.rs")
+    path_str.ends_with(&format!("_test.{}", ext)) ||
+    path_str.ends_with(&format!("_tests.{}", ext))
 }
 
 fn output_table(report: &PropCovReport, min_coverage: u32) {
@@ -420,7 +601,7 @@ mod tests {
     }
 }
 "#;
-        let (props, _units, _funcs) = analyze_file(source, "test.rs");
+        let (props, _units, _funcs) = analyze_file(source, "test.rs", Language::Rust);
         assert!(!props.is_empty(), "Should detect proptest");
         assert!(props.iter().any(|p| p.framework == "proptest"));
     }
@@ -436,7 +617,7 @@ mod tests {
     }
 }
 "#;
-        let (props, units, _funcs) = analyze_file(source, "test.rs");
+        let (props, units, _funcs) = analyze_file(source, "test.rs", Language::Rust);
         assert!(props.is_empty(), "Should not detect property tests in simple unit test file");
         assert_eq!(units, 1, "Should count unit test");
     }
@@ -449,7 +630,7 @@ fn prop_reverse_reverse(xs: Vec<u32>) -> bool {
     xs == reverse(reverse(xs))
 }
 "#;
-        let (props, _units, _funcs) = analyze_file(source, "test.rs");
+        let (props, _units, _funcs) = analyze_file(source, "test.rs", Language::Rust);
         assert!(!props.is_empty(), "Should detect quickcheck attribute");
         assert!(props.iter().any(|p| p.framework == "quickcheck"));
     }

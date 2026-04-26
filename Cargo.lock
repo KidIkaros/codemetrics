@@ -92,20 +92,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "ast-parse"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "syn",
-]
-
-[[package]]
 name = "ast-parse-ts"
 version = "0.1.0"
 dependencies = [
  "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-c-sharp",
+ "tree-sitter-cpp",
  "tree-sitter-go",
+ "tree-sitter-java",
  "tree-sitter-javascript",
+ "tree-sitter-php",
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -242,6 +239,7 @@ dependencies = [
  "clap",
  "predicates",
  "quality-common",
+ "rayon",
  "serde",
  "serde_json",
 ]
@@ -251,7 +249,7 @@ name = "crap-metric"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
- "ast-parse",
+ "ast-parse-ts",
  "clap",
  "predicates",
  "quality-common",
@@ -264,6 +262,25 @@ name = "crossbeam-channel"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-deque"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -298,14 +315,12 @@ name = "doc-coverage"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
- "ast-parse",
  "ast-parse-ts",
  "clap",
  "predicates",
  "quality-common",
  "serde",
  "serde_json",
- "syn",
 ]
 
 [[package]]
@@ -313,15 +328,20 @@ name = "duplication"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
- "ast-parse",
  "ast-parse-ts",
  "clap",
  "predicates",
  "quality-common",
+ "rayon",
  "serde",
  "serde_json",
- "syn",
 ]
+
+[[package]]
+name = "either"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "equivalent"
@@ -384,13 +404,11 @@ dependencies = [
 name = "fuzz-surface"
 version = "0.1.0"
 dependencies = [
- "ast-parse",
+ "ast-parse-ts",
  "clap",
  "quality-common",
- "quote",
  "serde",
  "serde_json",
- "syn",
 ]
 
 [[package]]
@@ -595,8 +613,8 @@ name = "mutation-test"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
- "ast-parse",
  "clap",
+ "libc",
  "predicates",
  "quality-common",
  "serde",
@@ -714,7 +732,10 @@ dependencies = [
 name = "prop-cov"
 version = "0.1.0"
 dependencies = [
+ "assert_cmd",
+ "ast-parse-ts",
  "clap",
+ "predicates",
  "quality-common",
  "serde",
  "serde_json",
@@ -724,7 +745,6 @@ dependencies = [
 name = "quality-cli"
 version = "0.1.0"
 dependencies = [
- "ast-parse",
  "ast-parse-ts",
  "clap",
  "notify",
@@ -773,6 +793,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rayon"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -815,7 +855,6 @@ name = "risk-map"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
- "ast-parse",
  "ast-parse-ts",
  "clap",
  "predicates",
@@ -942,9 +981,12 @@ dependencies = [
 name = "taint-scan"
 version = "0.1.0"
 dependencies = [
+ "assert_cmd",
  "ast-parse-ts",
  "clap",
+ "predicates",
  "quality-common",
+ "rayon",
  "serde",
  "serde_json",
 ]
@@ -997,10 +1039,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-c"
+version = "0.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "afd2b1bf1585dc2ef6d69e87d01db8adb059006649dd5f96f31aa789ee6e9c71"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-c-sharp"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1aac67f1ad71de1d6d39708d34811081c26dfa495658de6c14c34200849357c"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-cpp"
+version = "0.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df2196ea9d47b4ab4a31b9297eaa5a5d19a0b121dceb9f118f6790ad0ab94743"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-go"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8560a4d2f835cc0d4d2c2e03cbd0dde2f6114b43bc491164238d333e28b16ea"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-java"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aa6cbcdc8c679b214e616fd3300da67da0e492e066df01bcf5a5921a71e90d6"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -1021,6 +1103,16 @@ name = "tree-sitter-language"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
+
+[[package]]
+name = "tree-sitter-php"
+version = "0.24.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d8c17c3ab69052c5eeaa7ff5cd972dd1bc25d1b97ee779fec391ad3b5df5592"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "tree-sitter-python"

@@ -2,6 +2,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 const TEST_PROJECT: &str = env!("CARGO_MANIFEST_DIR");
+const FIXTURE_PROJECT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 fn coupling_cmd() -> Command {
     Command::cargo_bin("coupling").expect("coupling binary not found")
@@ -10,7 +11,7 @@ fn coupling_cmd() -> Command {
 #[test]
 fn test_basic_analysis() {
     coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .assert()
         .success()
         .stdout(predicate::str::contains("MODULE COUPLING ANALYSIS"));
@@ -19,7 +20,7 @@ fn test_basic_analysis() {
 #[test]
 fn test_json_output() {
     coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .arg("--format")
         .arg("json")
         .assert()
@@ -30,7 +31,7 @@ fn test_json_output() {
 #[test]
 fn test_dot_output() {
     coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .arg("--format")
         .arg("dot")
         .assert()
@@ -41,7 +42,7 @@ fn test_dot_output() {
 #[test]
 fn test_min_coupling_filter() {
     coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .arg("--min-coupling")
         .arg("1")
         .assert()
@@ -51,7 +52,7 @@ fn test_min_coupling_filter() {
 #[test]
 fn test_output_columns() {
     coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .assert()
         .success()
         .stdout(predicate::str::contains("FAN-IN"))
@@ -62,7 +63,7 @@ fn test_output_columns() {
 #[test]
 fn test_summary_displayed() {
     coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .assert()
         .success()
         .stdout(predicate::str::contains("Total modules"))
@@ -100,7 +101,7 @@ fn test_min_coupling_5_filter() {
 fn test_module_listing_format() {
     // Verify that module rows contain expected data fields
     let output = coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -118,7 +119,7 @@ fn test_module_listing_format() {
 fn test_most_coupled_section() {
     // Verify the MOST COUPLED section appears when there are tightly coupled modules
     let output = coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -135,7 +136,7 @@ fn test_most_coupled_section() {
 fn test_status_indicators() {
     // Verify status indicators (low/moderate/high) appear based on coupling levels
     let output = coupling_cmd()
-        .arg(TEST_PROJECT)
+        .arg(FIXTURE_PROJECT)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);

@@ -77,7 +77,7 @@ fn test_nonexistent_path() {
         .arg("/tmp/nonexistent-path-12345")
         .assert()
         .failure() // exits 1 when no files found
-        .stderr(predicate::str::contains("No .rs files found"));
+        .stderr(predicate::str::contains("No source files found"));
 }
 
 #[test]

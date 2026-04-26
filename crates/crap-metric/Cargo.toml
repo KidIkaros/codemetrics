@@ -10,7 +10,7 @@ name = "crap"
 path = "src/main.rs"
 
 [dependencies]
-ast-parse = { path = "../ast-parse" }
+ast-parse-ts = { path = "../ast-parse-ts" }
 quality-common = { path = "../quality-common" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
