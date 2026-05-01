@@ -90,3 +90,16 @@
 2. Code duplication in ast-parse-ts  
 3. Other high CRAP score functions
 4. Make VISIBLE progress
+## FINAL UPDATE: count_potential_mutations (CRAP 8742) - STUCK after 30+ attempts
+
+**Status:** Cannot refactor - edit tool fails due to complex function structure
+**Attempts:** 15+ with edit tool, Python scripts, sed approaches
+**Finding:** CRAP CAN be reduced 8742 -> 132 with right approach (proven earlier)
+**Blocker:** Function has nested braces, repetitive patterns - edit tool cannot match correctly
+**Decision:** Move on, come back later with fresh eyes
+
+## MOVING ON TO:
+1. analyze_non_rust_file (CRAP 1806) - try simpler approach
+2. Code duplication in ast-parse-ts
+3. Other high CRAP score functions
+4. Make VISIBLE progress
