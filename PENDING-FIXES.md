@@ -103,3 +103,25 @@
 2. Code duplication in ast-parse-ts
 3. Other high CRAP score functions
 4. Make VISIBLE progress
+## CURRENT STATUS AFTER 30+ MESSAGES:
+
+**STUCK:** 
+-  (CRAP 8742) - 15+ attempts, all failed
+- Edit tool cannot handle complex function with nested braces
+- Decision: Come back later with fresh eyes
+
+**PARTIALLY FIXED:**
+-  (CRAP 420 vs 1806) - used  helper
+- Still needs more work to get below 30
+
+**COMPLETED:**
+✅ Fixed taint violations (committed)
+✅ Added documentation (committed)  
+✅ Added NDJSON support (committed)
+✅ Added new fields (committed)
+✅ Created JSON schemas (committed)
+
+**MOVING ON TO:**
+1. Fix code duplication in ast-parse-ts
+2. Address other high CRAP functions
+3. Come back to stuck functions later
