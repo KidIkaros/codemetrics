@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 const TAINT_EXTS: &[&str] = &[
     "rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs",
-    "java", "php",
+    "java", "php", "rb", "swift",
 ];
 
 fn resolve_source_files(path: &str, recursive: bool) -> Result<Vec<PathBuf>, String> {

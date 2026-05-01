@@ -70,7 +70,7 @@ struct FunctionSkeleton {
 
 const SUPPORTED_EXTS: &[&str] = &[
     "rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs",
-    "java", "php",
+    "java", "php", "rb", "swift",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

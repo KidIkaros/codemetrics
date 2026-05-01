@@ -99,7 +99,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 const SUPPORTED_EXTS: &[&str] = &[
     "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx",
-    "hpp", "cs", "java", "php",
+    "hpp", "cs", "java", "php", "rb", "swift",
 ];
 
 fn build_file_risks(repo_root: &Path, churn_data: &HashMap<String, u32>) -> Vec<FileRisk> {

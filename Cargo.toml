@@ -13,7 +13,7 @@ members = [
     "crates/quality-server",
     "crates/fuzz-surface",
     "crates/prop-cov",
-    "crates/taint-scan", "crates/dep-freshness",
+    "crates/taint-scan",
 ]
 resolver = "2"
 

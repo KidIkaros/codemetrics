@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn scan_all_imports(dir: &Path) -> HashMap<String, HashSet<String>> {
     const EXTS: &[&str] = &[
         "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc",
-        "cxx", "hpp", "cs", "java", "php",
+        "cxx", "hpp", "cs", "java", "php", "rb", "swift",
     ];
     let files = find_source_files(dir.to_str().unwrap_or(""), true, EXTS);
     // Single-threaded rayon to reduce memory pressure (prevents OOM on 16GB/32GB systems)

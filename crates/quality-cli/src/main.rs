@@ -237,7 +237,7 @@ where
         path,
         recursive,
         &[
-            "rs", "py", "js", "ts", "go", "java", "c", "cpp", "cs", "php",
+            "rs", "py", "js", "ts", "go", "java", "c", "cpp", "cs", "php", "rb", "swift",
         ],
     );
     let mut total = 0;
@@ -315,7 +315,7 @@ fn check_crap(
 
 fn check_debt(path: &str, recursive: bool, max_debt: usize) -> CheckResult {
     let extensions = [
-        "rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "cs", "php",
+        "rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "cs", "php", "rb", "swift",
     ];
     let files = find_source_files(path, recursive, &extensions);
 
@@ -492,7 +492,7 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
 fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckResult {
     let all_exts = [
         "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc",
-        "cxx", "hpp", "cs", "java", "php",
+        "cxx", "hpp", "cs", "java", "php", "rb", "swift",
     ];
     let files = find_source_files(path, recursive, &all_exts);
 
@@ -1067,7 +1067,7 @@ fn run_batch(
             // Detect languages from source files at path
             let all_exts = [
                 "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp",
-                "cc", "cxx", "hpp", "cs", "java", "php",
+                "cc", "cxx", "hpp", "cs", "java", "php", "rb", "swift",
             ];
             let mut langs_detected: Vec<String> = find_source_files(path, true, &all_exts)
                 .iter()

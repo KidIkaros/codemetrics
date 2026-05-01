@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let extensions = [
-        "rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "rb", "php",
+        "rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "rb", "php", "swift",
     ];
     let files = find_source_files(&cli.path, cli.recursive, &extensions);
     if files.is_empty() {
