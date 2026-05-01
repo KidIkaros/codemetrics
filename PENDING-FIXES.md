@@ -59,3 +59,10 @@
 2. Continue with other high CRAP score functions
 3. Address code duplication
 4. Run `cargo fmt` and `cargo clippy` to fix style issues
+## STUCK: count_potential_mutations (CRAP 8742)
+
+**Status:** Cannot refactor - edit tool fails due to complex function structure with nested braces
+**Attempts:** 15+ attempts with edit tool, Python scripts, sed approaches
+**Finding:** CRAP score CAN be reduced from 8742 to 132 with simpler approach (proven earlier)
+**Blocker:** Syntax errors keep occurring when trying to replace the function
+**Next steps:** Come back with fresh eyes, consider writing helper functions separately
