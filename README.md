@@ -6,39 +6,39 @@ Code quality metrics for 10+ languages via `tree-sitter`. All analysis is langua
 
 | Crate | Binary | Purpose |
 |-------|--------|---------|
-| `ast-parse-ts` | (lib) | Universal AST parsing (tree-sitter) -- complexity, doc coverage, fingerprints, imports, identifiers for 10+ languages |
+| `ast-parse-ts` | (lib) | Universal AST parsing (tree-sitter) -- complexity, doc coverage, fingerprints, imports, identifiers for 12+ languages |
 | `quality-common` | (lib) | Shared utilities -- coverage parsing, CRAP scoring, source file discovery, output formatting |
 | `quality-cli` | `quality` | Unified CLI -- runs all tools in one batch with CI-ready JSON/SARIF output |
-| `crap-metric` | `crap` | CRAP score calculator -- maintenance risk scoring |
-| `mutation-test` | `mutate` | Mutation testing -- evaluate test suite quality |
+| `crap-metric` | `crap` | CRAP score calculator -- maintenance risk scoring (multi-language) |
+| `mutation-test` | `mutate` | Mutation testing -- evaluate test suite quality (Rust-only) |
 | `debt-scan` | `debt` | Technical debt scanner -- TODO/FIXME/HACK tracking with git blame |
 | `doc-coverage` | `doccov` | Documentation coverage -- public API doc comment percentage |
 | `duplication` | `dupfind` | Code duplication -- AST-based structural similarity detection |
 | `coupling` | `coupling` | Coupling analysis -- module dependency graphs, fan-in/fan-out |
 | `risk-map` | `riskmap` | Risk map -- churn × complexity cross-reference (the killer feature) |
 | `taint-scan` | `taint` | Taint analysis -- detect sensitive data flow to sinks |
-| `fuzz-surface` | `fuzz` | Fuzz surface analysis -- unsafe block and harness detection |
-| `prop-cov` | `propcov` | Property test coverage -- detect property-based and unit tests |
+| `fuzz-surface` | `fuzz` | Fuzz surface analysis -- identify fuzzable functions (Python, JS, Go, Rust) |
+| `prop-cov` | `propcov` | Property test coverage -- detect property-based and unit tests (multi-language) |
 
 ## Multi-Language Support
 
-The `ast-parse-ts` crate uses tree-sitter grammars (pure Rust, no external dependencies) to analyze source files directly — no compilation needed.
+The `ast-parse-ts` crate uses tree-sitter grammars (pure Rust, no external dependencies) to analyze source files directly — no compilation needed. Now supports 12 languages: Rust, Python, JavaScript, TypeScript, Go, C, C++, C#, Java, PHP, Ruby, Swift, and Kotlin (partial).
 
-| Tool | Rust | Python | JS/TS | Go | C/C++ | C# | Java | PHP |
-|------|:----:|:------:|:-----:|:--:|:-----:|:--:|:----:|:---:|
-| `debt-scan` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `taint-scan` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `complexity` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `doc-coverage` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `duplication` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `coupling` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `risk-map` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `crap-metric` | ✓ | — | — | — | — | — | — | — |
-| `mutation-test` | ✓ | — | — | — | — | — | — | — |
-| `fuzz-surface` | ✓ | — | — | — | — | — | — | — |
-| `prop-cov` | ✓ | — | — | — | — | — | — | — |
+| Tool | Rust | Python | JS/TS | Go | C/C++ | C# | Java | PHP | Ruby | Swift |
+|------|:----:|:------:|:-----:|:--:|:-----:|:--:|:----:|:---:|:----:|:-----:|
+| `debt-scan` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `taint-scan` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `complexity` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `doc-coverage` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `duplication` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `coupling` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `risk-map` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `crap-metric` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `mutation-test` | ✓ | — | — | — | — | — | — | — | — | — |
+| `fuzz-surface` | ✓ | ✓ | ✓ | ✓ | — | — | — | — | — | — |
+| `prop-cov` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-**Note:** Rust-specific tools (`crap`, `mutate`, `fuzz`, `propcov`) require `cargo` and are Rust-only by design. All other tools run directly on source code.
+**Note:** `mutation-test` (`mutate`) requires `cargo` and is Rust-only. All other tools run directly on source code for all supported languages.
 
 ## CRAP Metric
 
@@ -55,8 +55,14 @@ CRAP = comp^2 * (1 - coverage/100)^3 + comp
 ### Usage
 
 ```bash
-# Analyze a crate (no coverage data)
+# Analyze a Rust crate (no coverage data)
 crap ./crates/my-crate/src --recursive
+
+# Analyze Python files
+crap ./my-python-project --recursive
+
+# Analyze TypeScript files
+crap ./my-web-app --recursive
 
 # With lcov coverage file
 crap ./crates/my-crate/src --recursive --coverage coverage.info
@@ -159,6 +165,25 @@ debt ./src --recursive --marker fixme,hack
 
 # Sort by author
 debt ./src --recursive --sort author
+```
+
+### Fuzz Surface Analysis (`fuzz`)
+
+```bash
+# Analyze Python files for fuzzable functions
+fuzz ./my-python-project --recursive
+
+# Analyze JavaScript/TypeScript files
+fuzz ./my-web-app --recursive
+
+# Analyze Go files
+fuzz ./my-go-service --recursive
+
+# Only show functions with high fuzzability score
+fuzz ./src --recursive --min-score 30
+
+# Show top 10 most fuzzable functions
+fuzz ./src --recursive --top 10
 ```
 
 ### Documentation Coverage (`doccov`)
