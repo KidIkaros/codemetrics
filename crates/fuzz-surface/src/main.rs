@@ -71,7 +71,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let target_path = Path::new(&cli.path);
 
     // Supported languages for fuzzing analysis
-    let supported_exts = ["rs", "py", "js", "ts", "go"];
+    let supported_exts = ["rs", "py", "js", "ts", "go", "rb", "swift"];
 
     let source_files = if target_path.is_dir() {
         find_source_files(&cli.path, cli.recursive, &supported_exts)
@@ -179,6 +179,8 @@ fn analyze_file(
         Language::Python => analyze_python_file(source, &file_str),
         Language::JavaScript | Language::TypeScript => analyze_js_file(source, &file_str),
         Language::Go => analyze_go_file(source, &file_str),
+        Language::Ruby => analyze_ruby_file(source, &file_str),
+        Language::Swift => analyze_swift_file(source, &file_str),
         _ => Vec::new(),
     }
 }
@@ -343,6 +345,57 @@ fn analyze_go_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
         if trimmed.starts_with("func ") && trimmed.contains('(') {
             if let Some(mut f) = parse_go_fn_sig(trimmed, file, line_num) {
                 f.complexity = parse_complexity(source, file, Language::Go)
+                    .into_iter()
+                    .find(|func| func.name == f.name)
+                    .map_or(10, |func| func.complexity);
+                functions.push(f);
+            }
+        }
+    }
+
+    functions
+}
+
+fn analyze_ruby_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
+    let mut functions = Vec::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        // Look for Ruby function definitions (simpler approach)
+        if trimmed.starts_with("def ") && trimmed.contains('(') {
+            if let Some(mut f) = parse_ruby_fn_sig(trimmed, file, line_num) {
+                f.complexity = parse_complexity(source, file, Language::Ruby)
+                    .into_iter()
+                    .find(|func| func.name == f.name)
+                    .map_or(10, |func| func.complexity);
+                functions.push(f);
+            }
+        }
+    }
+
+    functions
+}
+
+fn analyze_swift_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
+    let mut functions = Vec::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        // Look for Swift function definitions
+        if (trimmed.starts_with("func ")
+            || trimmed.starts_with("static func ")
+            || trimmed.starts_with("private func ")
+            || trimmed.starts_with("public func "))
+            && trimmed.contains('(')
+        {
+            if let Some(mut f) = parse_swift_fn_sig(trimmed, file, line_num) {
+                f.complexity = parse_complexity(source, file, Language::Swift)
                     .into_iter()
                     .find(|func| func.name == f.name)
                     .map_or(10, |func| func.complexity);
@@ -751,6 +804,208 @@ fn estimate_js_complexity(sig: &str) -> u32 {
     complexity
 }
 
+fn parse_ruby_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
+    // Extract function name
+    let after_def = if let Some(pos) = sig.find("def ") {
+        &sig[pos + 4..]
+    } else if let Some(pos) = sig.find("def self.") {
+        &sig[pos + 9..]
+    } else {
+        return None;
+    };
+
+    let name_end = after_def.find('(')?;
+    let name = after_def[..name_end].trim().to_string();
+
+    // Extract parameters
+    let params_start = sig.find('(')?;
+    let params_end = sig.rfind(')')?;
+    let params_str = &sig[params_start + 1..params_end];
+
+    let params: Vec<String> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    };
+
+    // Calculate fuzzability score
+    let mut score = 0u32;
+    let mut fuzzable_params = Vec::new();
+
+    for param in &params {
+        let param_lower = param.to_lowercase();
+        // Raw byte input is very fuzzable
+        if param_lower.contains("string") || param_lower.contains("stringio") {
+            score += 20;
+            fuzzable_params.push(param.clone());
+        }
+        // Arrays/hashes can be fuzz targets
+        else if param_lower.contains("array") || param_lower.contains("hash") {
+            score += 15;
+            fuzzable_params.push(param.clone());
+        }
+    }
+
+    // No fuzzable params = not worth fuzzing
+    if score == 0 {
+        return None;
+    }
+
+    // Ruby functions starting with lowercase or with self. are private-ish
+    let is_public = !sig.starts_with("def self.");
+
+    // More parameters = more combinations to explore
+    score += params.len() as u32 * 2;
+
+    // Functions with more complexity are more likely to have bugs
+    let complexity = estimate_ruby_complexity(sig);
+    if complexity > 5 {
+        score += 5;
+    }
+
+    Some(FuzzableFunction {
+        name,
+        file: file.to_string(),
+        line,
+        params: fuzzable_params,
+        score,
+        is_public,
+        complexity,
+        has_harness: false, // No harness tracking for Ruby yet
+    })
+}
+
+fn parse_swift_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
+    // Extract function name
+    let after_func = if let Some(pos) = sig.find("func ") {
+        &sig[pos + 5..]
+    } else if let Some(pos) = sig.find("static func ") {
+        &sig[pos + 12..]
+    } else if let Some(pos) = sig.find("private func ") {
+        &sig[pos + 13..]
+    } else if let Some(pos) = sig.find("public func ") {
+        &sig[pos + 12..]
+    } else {
+        return None;
+    };
+
+    let name_end = after_func.find('(')?;
+    let name = after_func[..name_end].trim().to_string();
+
+    // Extract parameters
+    let params_start = sig.find('(')?;
+    let params_end = sig.rfind(')')?;
+    let params_str = &sig[params_start + 1..params_end];
+
+    let params: Vec<String> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    };
+
+    // Calculate fuzzability score
+    let mut score = 0u32;
+    let mut fuzzable_params = Vec::new();
+
+    for param in &params {
+        let param_lower = param.to_lowercase();
+        // String inputs are good fuzz targets
+        if param_lower.contains("string") || param_lower.contains(": String") {
+            score += 20;
+            fuzzable_params.push(param.clone());
+        }
+        // Arrays can be fuzz targets
+        else if param_lower.contains("array")
+            || param_lower.contains("[]")
+            || param_lower.contains("[")
+        {
+            score += 15;
+            fuzzable_params.push(param.clone());
+        }
+        // Data types can be fuzz targets
+        else if param_lower.contains("data") || param_lower.contains("any") {
+            score += 10;
+            fuzzable_params.push(param.clone());
+        }
+    }
+
+    // No fuzzable params = not worth fuzzing
+    if score == 0 {
+        return None;
+    }
+
+    // Check visibility
+    let is_public = sig.starts_with("public func ") || !sig.starts_with("private func ");
+
+    // More parameters = more combinations to explore
+    score += params.len() as u32 * 2;
+
+    // Functions with more complexity are more likely to have bugs
+    let complexity = estimate_swift_complexity(sig);
+    if complexity > 5 {
+        score += 5;
+    }
+
+    Some(FuzzableFunction {
+        name,
+        file: file.to_string(),
+        line,
+        params: fuzzable_params,
+        score,
+        is_public,
+        complexity,
+        has_harness: false, // No harness tracking for Swift yet
+    })
+}
+
+fn estimate_ruby_complexity(sig: &str) -> u32 {
+    // Simple heuristic: count control flow keywords
+    let mut complexity = 1;
+    if sig.contains("if ") {
+        complexity += 1;
+    }
+    if sig.contains("for ") {
+        complexity += 1;
+    }
+    if sig.contains("while ") {
+        complexity += 1;
+    }
+    if sig.contains("unless ") {
+        complexity += 1;
+    }
+    if sig.contains("case ") {
+        complexity += 1;
+    }
+    complexity
+}
+
+fn estimate_swift_complexity(sig: &str) -> u32 {
+    // Simple heuristic: count control flow keywords
+    let mut complexity = 1;
+    if sig.contains("if ") {
+        complexity += 1;
+    }
+    if sig.contains("for ") {
+        complexity += 1;
+    }
+    if sig.contains("while ") {
+        complexity += 1;
+    }
+    if sig.contains("switch ") {
+        complexity += 1;
+    }
+    if sig.contains("guard ") {
+        complexity += 1;
+    }
+    complexity
+}
+
 fn estimate_go_complexity(sig: &str) -> u32 {
     // Simple heuristic: count control flow keywords
     let mut complexity = 1;
@@ -931,6 +1186,45 @@ mod tests {
         assert!(f.is_public);
         assert_eq!(f.score, 32); // 30 for []byte + 1 param*2
         assert!(f.params.iter().any(|p| p.contains("[]byte")));
+    }
+
+    #[test]
+    fn test_parse_ruby_fn_sig_fuzzable() {
+        let f = parse_ruby_fn_sig("def process_data(data: string): string", "test.rb", 1).unwrap();
+        assert_eq!(f.name, "process_data");
+        assert!(f.is_public);
+        assert_eq!(f.score, 22); // 20 for string + 1 param*2
+        assert!(f.params.iter().any(|p| p.contains("string")));
+    }
+
+    #[test]
+    fn test_parse_ruby_fn_sig_not_fuzzable() {
+        let f = parse_ruby_fn_sig("def internal_helper(x, y): int", "test.rb", 1);
+        assert!(f.is_none(), "No fuzzable params should return None");
+    }
+
+    #[test]
+    fn test_parse_swift_fn_sig_fuzzable() {
+        let f = parse_swift_fn_sig("func processData(data: String): String {", "test.swift", 1)
+            .unwrap();
+        assert_eq!(f.name, "processData");
+        assert!(f.is_public);
+        assert_eq!(f.score, 22); // 20 for String + 1 param*2
+        assert!(f.params.iter().any(|p| p.contains("String")));
+    }
+
+    #[test]
+    fn test_parse_swift_fn_sig_array() {
+        let f = parse_swift_fn_sig(
+            "func processArray(items: [Int]) -> [Int] {",
+            "test.swift",
+            1,
+        )
+        .unwrap();
+        assert_eq!(f.name, "processArray");
+        assert!(f.is_public);
+        assert_eq!(f.score, 17); // 15 for array + 1 param*2
+        assert!(f.params.iter().any(|p| p.contains("[Int]")));
     }
 
     #[test]

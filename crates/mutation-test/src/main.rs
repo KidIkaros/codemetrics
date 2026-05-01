@@ -100,6 +100,197 @@ struct MutationSummary {
     mutation_score: f64,
 }
 
+fn analyze_non_rust_file(path: &str, _cli: &Cli) -> Result<(), String> {
+    println!("MUTATION ANALYSIS (analysis mode - no test execution)");
+    println!("Note: Full mutation testing with test execution is Rust-only.");
+    println!("For Ruby/Swift/other languages: Use language-specific mutation frameworks.");
+    println!();
+    println!("To run full mutation tests:");
+    println!("  Ruby: mutant-rs, mutant, rspec-mocks");
+    println!("  Swift: SwiftMutator");
+    println!("  Python: cosmic-ray, mutmut");
+    println!();
+
+    let source = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => return Err(format!("Failed to read {}: {}", path, e)),
+    };
+
+    // Determine language
+    let lang = if path.ends_with(".rb") {
+        "Ruby"
+    } else if path.ends_with(".swift") {
+        "Swift"
+    } else if path.ends_with(".py") {
+        "Python"
+    } else if path.ends_with(".js") || path.ends_with(".ts") {
+        "JavaScript/TypeScript"
+    } else if path.ends_with(".go") {
+        "Go"
+    } else {
+        "Unknown"
+    };
+
+    println!("Language: {}", lang);
+    println!("File: {}", path);
+    println!();
+
+    // Count potential mutation points (simplified analysis)
+    let potential_mutations = count_potential_mutations(&source, lang);
+
+    println!("Analysis complete:");
+    println!("  Potential mutation points: {}", potential_mutations);
+    println!(
+        "  Estimated test coverage needed: {}-{}%",
+        potential_mutations * 2,
+        potential_mutations * 3
+    );
+    println!();
+    println!("Use language-specific mutation tools for actual mutation testing:");
+    if lang == "Ruby" {
+        println!("  $ gem install mutant-rs");
+        println!("  $ mutant path/to/file.rb");
+    } else if lang == "Swift" {
+        println!("  # Swift mutation tools require manual setup");
+        println!("  # Consider using SwiftMutator");
+    } else if lang == "Python" {
+        println!("  $ pip install cosmic-ray");
+        println!("  $ cosmic-ray run --test-runner pytest path/to/file.py");
+    } else if lang == "JavaScript/TypeScript" {
+        println!("  $ npm install -g stryker-mutator-core");
+        println!("  $ npx stryker run path/to/file.js");
+    }
+
+    Ok(())
+}
+
+fn count_potential_mutations(source: &str, lang: &str) -> usize {
+    let mut count = 0;
+
+    match lang {
+        "Ruby" => {
+            // Count operators that could be mutated
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("while ") {
+                count += source.matches("while ").count();
+            }
+        }
+        "Swift" => {
+            // Count Swift operators
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("while ") {
+                count += source.matches("while ").count();
+            }
+            if source.contains("switch ") {
+                count += source.matches("switch ").count();
+            }
+        }
+        "Python" => {
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("and ") {
+                count += source.matches("and ").count();
+            }
+            if source.contains("or ") {
+                count += source.matches("or ").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("while ") {
+                count += source.matches("while ").count();
+            }
+        }
+        "JavaScript/TypeScript" => {
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if") {
+                count += source.matches("if").count();
+            }
+            if source.contains("for") {
+                count += source.matches("for").count();
+            }
+            if source.contains("while") {
+                count += source.matches("while").count();
+            }
+        }
+        "Go" => {
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+        }
+        _ => {}
+    }
+
+    count
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     run(cli)?;
@@ -109,12 +300,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run(cli: Cli) -> Result<(), String> {
     let start = std::time::Instant::now();
     let crate_root_raw = Path::new(&cli.path);
+
     let crate_root_buf = crate_root_raw
         .canonicalize()
         .map_err(|e| format!("Cannot resolve path {}: {}", cli.path, e))?;
     let crate_root = crate_root_buf.as_path();
-    if !crate_root.join("Cargo.toml").exists() {
-        return Err(format!("No Cargo.toml found at {}", crate_root.display()));
+
+    // Check if this is a Rust crate or other language
+    let is_rust_crate = crate_root.join("Cargo.toml").exists();
+    if !is_rust_crate {
+        // For non-Rust files, provide mutation analysis without test execution
+        if crate_root_raw.is_file() {
+            return analyze_non_rust_file(&cli.path, &cli);
+        } else {
+            return Err(format!("Mutation test execution requires Rust crate (Cargo.toml). For other languages, pass individual files for mutation analysis only."));
+        }
     }
 
     // Hard ceiling to prevent runaway test sessions
