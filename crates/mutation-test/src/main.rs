@@ -35,6 +35,10 @@ struct Cli {
     #[arg(short, long, default_value = "30")]
     timeout: u64,
 
+    /// Use cargo-nextest instead of cargo test (3x faster, better memory isolation)
+    #[arg(long)]
+    nextest: bool,
+
     /// Output format: table (default) or json
     #[arg(short, long, default_value = "table")]
     format: String,
@@ -235,8 +239,14 @@ fn run(cli: Cli) -> Result<(), String> {
             use std::io::Write;
             let _ = std::io::stdout().flush();
 
-            let result =
-                test_mutant_isolated(mutant, crate_root, &workspace_root, &scratch, cli.timeout);
+            let result = test_mutant_isolated(
+                mutant,
+                crate_root,
+                &workspace_root,
+                &scratch,
+                cli.timeout,
+                cli.nextest,
+            );
             match result.status.as_str() {
                 "killed" => println!("✓ KILLED"),
                 "survived" => println!("✗ SURVIVED"),
@@ -416,6 +426,7 @@ fn test_mutant_isolated(
     workspace_root: &Path,
     scratch: &ScratchCrate,
     timeout_secs: u64,
+    use_nextest: bool,
 ) -> MutantResult {
     // Resolve the file path relative to the original crate root
     let original_file = crate_root.join(&mutant.file);
@@ -461,8 +472,12 @@ fn test_mutant_isolated(
         };
     }
 
-    // Run cargo test in the scratch crate (not the whole workspace)
-    let test_result = run_cargo_test_with_timeout(&scratch.scratch_crate_root(), timeout_secs);
+    // Run tests with cargo-nextest or cargo test
+    let test_result = if use_nextest {
+        run_nextest_with_timeout(&scratch.scratch_crate_root(), timeout_secs)
+    } else {
+        run_cargo_test_with_timeout(&scratch.scratch_crate_root(), timeout_secs)
+    };
 
     // Always restore the scratch file to clean state
     let _ = std::fs::write(&scratch_file, &original_source);
@@ -511,6 +526,67 @@ enum TestOutcome {
 }
 
 /// Spawn `cargo test --quiet` in `crate_root`, kill it after `timeout_secs` via watchdog thread.
+/// Run tests with cargo-nextest (3x faster, better memory isolation)
+fn run_nextest_with_timeout(crate_root: &Path, timeout_secs: u64) -> TestOutcome {
+    let mut cmd = std::process::Command::new("cargo-nextest");
+    cmd.args(["run", "--no-capture"])
+        .current_dir(crate_root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return TestOutcome::Error(format!("Failed to spawn cargo-nextest: {}", e)),
+    };
+
+    // Watchdog: kills the child after timeout_secs.
+    let child_id = child.id();
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
+    let timed_out_clone = Arc::clone(&timed_out);
+    let done_clone = Arc::clone(&done);
+
+    let watchdog = thread::spawn(move || {
+        let deadline = Duration::from_secs(timeout_secs);
+        let tick = Duration::from_millis(100);
+        let mut elapsed = Duration::ZERO;
+        while elapsed < deadline {
+            if done_clone.load(Ordering::Relaxed) {
+                return; // process finished normally, bail out
+            }
+            thread::sleep(tick);
+            elapsed += tick;
+        }
+        timed_out_clone.store(true, Ordering::Relaxed);
+        // Kill the entire process group so cargo child procs die too
+        unsafe {
+            libc::kill(-(child_id as libc::pid_t), libc::SIGKILL);
+        }
+    });
+
+    let output = child.wait_with_output();
+    done.store(true, Ordering::Relaxed); // tell watchdog we're done
+    let _ = watchdog.join();
+
+    if timed_out.load(Ordering::Relaxed) {
+        return TestOutcome::Timeout;
+    }
+
+    match output {
+        Err(e) => TestOutcome::Error(format!("cargo-nextest failed: {}", e)),
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let combined = format!("{}\n{}", stdout, stderr);
+            if out.status.success() {
+                TestOutcome::Survived(combined)
+            } else {
+                TestOutcome::Killed(combined)
+            }
+        }
+    }
+}
+
 /// Sets CARGO_TARGET_DIR to the shared host target dir to reuse build artifacts and avoid
 /// recompiling everything from scratch on each mutation.
 fn run_cargo_test_with_timeout(crate_root: &Path, timeout_secs: u64) -> TestOutcome {
