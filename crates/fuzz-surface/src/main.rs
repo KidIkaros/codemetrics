@@ -1,3 +1,4 @@
+// Step 8: Refactoring continues
 // Step 6: Continuing refactoring
 // Refactoring progress: Step 4
 #![deny(clippy::all)]
