@@ -1,11 +1,16 @@
+#![deny(clippy::all)]
+
 use clap::Parser;
 use serde::Serialize;
 
 use ast_parse_ts::{parse_doc_coverage_items_file, Language};
-use quality_common::{find_source_files, Column, print_table_header, print_table_row, separator};
+use quality_common::{find_source_files, print_table_header, print_table_row, separator, Column};
 
 #[derive(Parser)]
-#[command(name = "doccov", about = "Documentation coverage -- measure public API doc comment percentage")]
+#[command(
+    name = "doccov",
+    about = "Documentation coverage -- measure public API doc comment percentage"
+)]
 struct Cli {
     /// Path to scan (file or directory)
     path: String,
@@ -25,7 +30,7 @@ struct Cli {
 
 #[derive(Debug, Clone, Serialize)]
 struct DocItem {
-    kind: String,     // fn, struct, enum, trait, impl_fn
+    kind: String, // fn, struct, enum, trait, impl_fn
     name: String,
     public: bool,
     documented: bool,
@@ -50,29 +55,33 @@ struct DocSummary {
 
 #[derive(Serialize)]
 struct KindBreakdown {
-    functions: (usize, usize),    // (total_public, documented)
+    functions: (usize, usize), // (total_public, documented)
     structs: (usize, usize),
     enums: (usize, usize),
     traits: (usize, usize),
     impl_fns: (usize, usize),
 }
 
-const ALL_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
+const ALL_EXTS: &[&str] = &[
+    "rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs",
+    "java", "php",
+];
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let all_files = find_source_files(&cli.path, cli.recursive, ALL_EXTS);
     if all_files.is_empty() {
-        eprintln!("No supported source files found at {}", cli.path);
-        std::process::exit(1);
+        return Err(format!("No supported source files found at {}", cli.path).into());
     }
 
     let mut all_items: Vec<DocItem> = Vec::new();
 
     for file_path in &all_files {
         let lang = Language::from_extension(file_path);
-        if lang == Language::Unknown { continue; }
+        if lang == Language::Unknown {
+            continue;
+        }
         let (stats, items) = parse_doc_coverage_items_file(file_path);
         for info in items {
             all_items.push(DocItem {
@@ -96,7 +105,8 @@ fn main() {
                     line: 0,
                 });
             }
-            for item in all_items.iter_mut()
+            for item in all_items
+                .iter_mut()
                 .filter(|i| i.file == *file_path && i.name.is_empty())
                 .take(stats.documented)
             {
@@ -111,10 +121,16 @@ fn main() {
             let coverage = output_table(&all_items);
             if let Some(min) = cli.min {
                 if coverage < min {
-                    eprintln!("\nFAILED: Coverage {:.0}% is below minimum {:.0}%", coverage, min);
-                    std::process::exit(1);
+                    eprintln!(
+                        "\nFAILED: Coverage {:.0}% is below minimum {:.0}%",
+                        coverage, min
+                    );
+                    return Err(
+                        format!("Coverage {:.0}% is below minimum {:.0}%", coverage, min).into(),
+                    );
                 }
             }
+            Ok(())
         }
     }
 }
@@ -123,7 +139,11 @@ fn output_table(items: &[DocItem]) -> f64 {
     let public_items: Vec<_> = items.iter().filter(|i| i.public).collect();
     let documented = public_items.iter().filter(|i| i.documented).count();
     let total = public_items.len();
-    let coverage = if total > 0 { documented as f64 / total as f64 * 100.0 } else { 100.0 };
+    let coverage = if total > 0 {
+        documented as f64 / total as f64 * 100.0
+    } else {
+        100.0
+    };
 
     // By kind breakdown
     let count_kind = |kind: &str| -> (usize, usize) {
@@ -150,10 +170,30 @@ fn output_table(items: &[DocItem]) -> f64 {
     println!();
     println!("  By kind:");
     println!("    Functions:      {}/{} ({:.0}%)", fns.1, fns.0, pct(fns));
-    println!("    Structs:        {}/{} ({:.0}%)", structs.1, structs.0, pct(structs));
-    println!("    Enums:          {}/{} ({:.0}%)", enums.1, enums.0, pct(enums));
-    println!("    Traits:         {}/{} ({:.0}%)", traits.1, traits.0, pct(traits));
-    println!("    Impl fns:       {}/{} ({:.0}%)", impl_fns.1, impl_fns.0, pct(impl_fns));
+    println!(
+        "    Structs:        {}/{} ({:.0}%)",
+        structs.1,
+        structs.0,
+        pct(structs)
+    );
+    println!(
+        "    Enums:          {}/{} ({:.0}%)",
+        enums.1,
+        enums.0,
+        pct(enums)
+    );
+    println!(
+        "    Traits:         {}/{} ({:.0}%)",
+        traits.1,
+        traits.0,
+        pct(traits)
+    );
+    println!(
+        "    Impl fns:       {}/{} ({:.0}%)",
+        impl_fns.1,
+        impl_fns.0,
+        pct(impl_fns)
+    );
 
     if !undocumented.is_empty() {
         println!();
@@ -193,7 +233,11 @@ fn output_table(items: &[DocItem]) -> f64 {
 }
 
 fn pct((doc, total): (usize, usize)) -> f64 {
-    if total > 0 { doc as f64 / total as f64 * 100.0 } else { 0.0 }
+    if total > 0 {
+        doc as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    }
 }
 
 fn icon(kind: &str) -> &'static str {
@@ -207,11 +251,15 @@ fn icon(kind: &str) -> &'static str {
     }
 }
 
-fn output_json(items: &[DocItem]) {
+fn output_json(items: &[DocItem]) -> Result<(), Box<dyn std::error::Error>> {
     let public_items: Vec<_> = items.iter().filter(|i| i.public).collect();
     let documented = public_items.iter().filter(|i| i.documented).count();
     let total = public_items.len();
-    let coverage = if total > 0 { documented as f64 / total as f64 * 100.0 } else { 100.0 };
+    let coverage = if total > 0 {
+        documented as f64 / total as f64 * 100.0
+    } else {
+        100.0
+    };
 
     let count_kind = |kind: &str| -> (usize, usize) {
         let items: Vec<_> = public_items.iter().filter(|i| i.kind == kind).collect();
@@ -236,7 +284,8 @@ fn output_json(items: &[DocItem]) {
         },
     };
 
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 #[cfg(test)]

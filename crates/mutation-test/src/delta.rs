@@ -2,7 +2,6 @@
 ///
 /// Uses git diff to identify changed functions, builds a call graph to find
 /// affected callers, and limits mutation generation to only those functions.
-
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
@@ -122,9 +121,12 @@ pub fn find_function_ranges(source: &str) -> HashMap<String, (usize, usize)> {
         let trimmed = line.trim();
 
         // Detect function signature
-        let is_signature = (trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") ||
-            trimmed.starts_with("pub async fn ") || trimmed.starts_with("async fn ") ||
-            trimmed.starts_with("pub unsafe fn ") || trimmed.starts_with("unsafe fn "))
+        let is_signature = (trimmed.starts_with("pub fn ")
+            || trimmed.starts_with("fn ")
+            || trimmed.starts_with("pub async fn ")
+            || trimmed.starts_with("async fn ")
+            || trimmed.starts_with("pub unsafe fn ")
+            || trimmed.starts_with("unsafe fn "))
             && trimmed.contains('(');
 
         if is_signature {
@@ -137,7 +139,10 @@ pub fn find_function_ranges(source: &str) -> HashMap<String, (usize, usize)> {
                     if !name.is_empty() {
                         current_fn = Some((name.to_string(), line_num));
                         // Start fresh brace count for this line only
-                        brace_depth = trimmed.matches('{').count().saturating_sub(trimmed.matches('}').count());
+                        brace_depth = trimmed
+                            .matches('{')
+                            .count()
+                            .saturating_sub(trimmed.matches('}').count());
                     }
                 }
             }
@@ -178,13 +183,14 @@ pub fn map_changed_to_functions(
         for (fn_name, (start, end)) in &functions {
             let affected = file_regions.iter().any(|r| {
                 // Check if any changed line falls within this function
-                (r.start_line >= *start && r.start_line <= *end) ||
-                (r.end_line >= *start && r.end_line <= *end) ||
-                (r.start_line <= *start && r.end_line >= *end)
+                (r.start_line >= *start && r.start_line <= *end)
+                    || (r.end_line >= *start && r.end_line <= *end)
+                    || (r.start_line <= *start && r.end_line >= *end)
             });
 
             if affected {
-                result.entry(file_path.clone())
+                result
+                    .entry(file_path.clone())
                     .or_default()
                     .push(fn_name.clone());
             }
@@ -207,16 +213,15 @@ pub fn build_call_graph(source_files: &[(String, String)]) -> HashMap<String, Ha
 
             // Scan lines within this function for calls to other functions
             // Note: end is inclusive, so we iterate through end (exclusive range goes to end)
-            for line_idx in (start.saturating_sub(1))..(*end).min(lines.len()) {
-                let line = lines[line_idx];
-                let trimmed = line.trim();
+            for item in lines.iter().take(*end).skip(start.saturating_sub(1)) {
+                let trimmed = item.trim();
 
                 // Skip comments and local let bindings (but not fn bodies on same line)
                 if trimmed.starts_with("//") || trimmed.starts_with("let ") {
                     continue;
                 }
 
-                for (other_name, _) in &functions {
+                for other_name in functions.keys() {
                     if other_name == fn_name {
                         continue;
                     }
@@ -227,7 +232,7 @@ pub fn build_call_graph(source_files: &[(String, String)]) -> HashMap<String, Ha
                         format!("{}::", other_name),
                         format!("&mut {}", other_name),
                     ];
-                    if call_patterns.iter().any(|p| line.contains(p)) {
+                    if call_patterns.iter().any(|p| item.contains(p)) {
                         callers.insert(other_name.clone());
                     }
                 }
@@ -249,7 +254,10 @@ pub fn get_affected_functions(
     let mut reverse_graph: HashMap<String, HashSet<String>> = HashMap::new();
     for (caller, callees) in call_graph {
         for callee in callees {
-            reverse_graph.entry(callee.clone()).or_default().insert(caller.clone());
+            reverse_graph
+                .entry(callee.clone())
+                .or_default()
+                .insert(caller.clone());
         }
     }
 
@@ -281,15 +289,22 @@ pub fn is_line_in_affected_function(
     affected: &HashMap<String, Vec<String>>,
     source_files: &[(String, String)],
 ) -> bool {
-    let source = source_files.iter()
+    let source = source_files
+        .iter()
         .find(|(f, _)| file_path.ends_with(f) || f == file_path)
         .map(|(_, s)| s.as_str());
 
     let Some(source) = source else { return true }; // If we can't find source, allow it
 
     let functions = find_function_ranges(source);
-    let affected_fns = affected.get(file_path)
-        .or_else(|| affected.iter().find(|(k, _)| file_path.ends_with(k.as_str())).map(|(_, v)| v))
+    let affected_fns = affected
+        .get(file_path)
+        .or_else(|| {
+            affected
+                .iter()
+                .find(|(k, _)| file_path.ends_with(k.as_str()))
+                .map(|(_, v)| v)
+        })
         .cloned()
         .unwrap_or_default();
 
@@ -317,7 +332,8 @@ pub fn run_delta_analysis(
     let affected_functions = get_affected_functions(&changed_functions, &call_graph);
 
     let _changed_count: usize = changed_functions.values().map(|v| v.len()).sum();
-    let total_fn_count: usize = source_files.iter()
+    let total_fn_count: usize = source_files
+        .iter()
         .map(|(_, s)| find_function_ranges(s).len())
         .sum();
 
@@ -376,13 +392,18 @@ fn subtract(a: i32, b: i32) -> i32 {
     a - b
 }
 "#;
-        let regions = vec![
-            ChangedRegion { file: "test.rs".to_string(), start_line: 2, end_line: 4 },
-        ];
+        let regions = vec![ChangedRegion {
+            file: "test.rs".to_string(),
+            start_line: 2,
+            end_line: 4,
+        }];
         let files = vec![("test.rs".to_string(), source.to_string())];
         let result = map_changed_to_functions(&regions, &files);
         assert!(result.get("test.rs").unwrap().contains(&"add".to_string()));
-        assert!(!result.get("test.rs").unwrap().contains(&"subtract".to_string()));
+        assert!(!result
+            .get("test.rs")
+            .unwrap()
+            .contains(&"subtract".to_string()));
     }
 
     #[test]

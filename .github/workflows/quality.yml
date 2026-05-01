@@ -61,6 +61,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: Run cargo audit
+        run: cargo audit --deny warnings
       - name: Download release binaries
         uses: actions/download-artifact@v4
         with:
@@ -76,6 +80,11 @@ jobs:
           ./target/release/quality run . --format sarif \
             --baseline .quality-baseline.sarif \
             > quality-results.sarif
+          # Check if SARIF indicates new issues (non-zero exit if regression)
+          if [ $? -ne 0 ]; then
+            echo "::error::Quality regression detected compared to baseline"
+            exit 1
+          fi
       - name: Upload SARIF to GitHub Security
         if: always()
         uses: github/codeql-action/upload-sarif@v3

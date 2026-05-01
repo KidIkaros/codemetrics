@@ -1,3 +1,5 @@
+#![deny(clippy::all)]
+
 /// Universal AST layer backed by tree-sitter.
 /// Supports Rust, Python, JavaScript, TypeScript, Go, C, C++, C#, Java, PHP.
 use std::cell::RefCell;
@@ -116,7 +118,7 @@ impl DocStats {
 /// A single documentable item found in a source file.
 #[derive(Debug, Clone)]
 pub struct DocItemInfo {
-    pub kind: String,     // e.g. "fn", "struct", "class", "trait", "method"
+    pub kind: String, // e.g. "fn", "struct", "class", "trait", "method"
     pub name: String,
     pub line: usize,
     pub documented: bool,
@@ -125,48 +127,55 @@ pub struct DocItemInfo {
 /// Parse doc coverage and return per-item details for detailed reporting.
 pub fn parse_doc_coverage_items(source: &str, lang: Language) -> (DocStats, Vec<DocItemInfo>) {
     parse_with_tree(source, lang, |tree| {
-    let source_bytes = source.as_bytes();
-    let mut nodes = Vec::new();
-    collect_public_items(tree.root_node(), lang, source_bytes, &mut nodes);
+        let source_bytes = source.as_bytes();
+        let mut nodes = Vec::new();
+        collect_public_items(tree.root_node(), lang, source_bytes, &mut nodes);
 
-    let mut stats = DocStats::default();
-    let mut items = Vec::new();
-    for item in nodes {
-        stats.total_public += 1;
-        let line = node_start_line(item);
-        let documented = match lang {
-            Language::Python => {
-                python_fn_has_docstring(item, source_bytes)
-                    || has_doc_comment_before(source, line, lang)
+        let mut stats = DocStats::default();
+        let mut items = Vec::new();
+        for item in nodes {
+            stats.total_public += 1;
+            let line = node_start_line(item);
+            let documented = match lang {
+                Language::Python => {
+                    python_fn_has_docstring(item, source_bytes)
+                        || has_doc_comment_before(source, line, lang)
+                }
+                _ => has_doc_comment_before(source, line, lang),
+            };
+            if documented {
+                stats.documented += 1;
             }
-            _ => has_doc_comment_before(source, line, lang),
-        };
-        if documented {
-            stats.documented += 1;
+            // Derive a human-readable kind from the tree-sitter node kind
+            let kind = normalize_doc_kind(item.kind(), lang);
+            let name = if let Some(field) = item.child_by_field_name(function_name_field(lang)) {
+                node_text(field, source_bytes).to_string()
+            } else {
+                node_text(item, source_bytes).to_string()
+            };
+            items.push(DocItemInfo {
+                kind,
+                name: name.trim().to_string(),
+                line,
+                documented,
+            });
         }
-        // Derive a human-readable kind from the tree-sitter node kind
-        let kind = normalize_doc_kind(item.kind(), lang);
-        let name = if let Some(field) = item.child_by_field_name(function_name_field(lang)) {
-            node_text(field, source_bytes).to_string()
-        } else {
-            node_text(item, source_bytes).to_string()
-        };
-        items.push(DocItemInfo {
-            kind,
-            name: name.trim().to_string(),
-            line,
-            documented,
-        });
-    }
-    (stats, items)
+        (stats, items)
     })
 }
 
 fn normalize_doc_kind(ts_kind: &str, _lang: Language) -> String {
     match ts_kind {
-        "function_item" | "function_definition" | "function_declaration" | "function"
-        | "method_definition" | "method_declaration" | "method_signature" | "impl_item"
-        | "function_declarator" | "local_function_statement" => "fn".to_string(),
+        "function_item"
+        | "function_definition"
+        | "function_declaration"
+        | "function"
+        | "method_definition"
+        | "method_declaration"
+        | "method_signature"
+        | "impl_item"
+        | "function_declarator"
+        | "local_function_statement" => "fn".to_string(),
         "struct_item" | "struct_specifier" | "class_declaration" | "class_definition"
         | "struct_declaration" => "struct".to_string(),
         "enum_item" | "enum_specifier" | "enum_declaration" => "enum".to_string(),
@@ -218,7 +227,9 @@ fn init_parser_for_lang(lang: Language) -> Option<Parser> {
 pub fn with_pooled_parser<T>(lang: Language, f: impl FnOnce(&mut Parser) -> T) -> T {
     PARSER_POOL.with(|pool| {
         let mut pool = pool.borrow_mut();
-        let entry = pool.entry(lang).or_insert_with(|| init_parser_for_lang(lang));
+        let entry = pool
+            .entry(lang)
+            .or_insert_with(|| init_parser_for_lang(lang));
         if entry.is_none() {
             *entry = init_parser_for_lang(lang);
         }
@@ -242,7 +253,11 @@ fn with_tree(source: &str, lang: Language) -> Option<tree_sitter::Tree> {
 }
 
 /// Parse `source` and run `f` on the resulting tree, returning `T::default()` on parse failure.
-fn parse_with_tree<T: Default>(source: &str, lang: Language, f: impl FnOnce(tree_sitter::Tree) -> T) -> T {
+fn parse_with_tree<T: Default>(
+    source: &str,
+    lang: Language,
+    f: impl FnOnce(tree_sitter::Tree) -> T,
+) -> T {
     match with_tree(source, lang) {
         Some(tree) => f(tree),
         None => T::default(),
@@ -385,8 +400,16 @@ fn function_node_kinds(lang: Language) -> &'static [&'static str] {
         Language::Go => &["function_declaration", "method_declaration"],
         Language::C => &["function_declarator"],
         Language::Cpp => &["function_declarator", "lambda_expression"],
-        Language::CSharp => &["method_declaration", "constructor_declaration", "local_function_statement"],
-        Language::Java => &["method_declaration", "constructor_declaration", "lambda_expression"],
+        Language::CSharp => &[
+            "method_declaration",
+            "constructor_declaration",
+            "local_function_statement",
+        ],
+        Language::Java => &[
+            "method_declaration",
+            "constructor_declaration",
+            "lambda_expression",
+        ],
         Language::Php => &["function_definition", "method_declaration"],
         Language::Unknown => &[],
     }
@@ -429,41 +452,41 @@ fn collect_functions<'a>(node: Node<'a>, func_kinds: &[&str], out: &mut Vec<Node
 /// Parse a source string and return function complexity for all functions.
 pub fn parse_complexity(source: &str, file: &str, lang: Language) -> Vec<FunctionInfo> {
     parse_with_tree(source, lang, |tree| {
-    let source_bytes = source.as_bytes();
-    let func_kinds = function_node_kinds(lang);
-    let branch_kinds = complexity_branch_kinds(lang);
-    let name_field = function_name_field(lang);
+        let source_bytes = source.as_bytes();
+        let func_kinds = function_node_kinds(lang);
+        let branch_kinds = complexity_branch_kinds(lang);
+        let name_field = function_name_field(lang);
 
-    let mut functions = Vec::new();
-    let mut func_nodes = Vec::new();
-    collect_functions(tree.root_node(), func_kinds, &mut func_nodes);
+        let mut functions = Vec::new();
+        let mut func_nodes = Vec::new();
+        collect_functions(tree.root_node(), func_kinds, &mut func_nodes);
 
-    for func_node in func_nodes {
-        // For Rust impl_item, skip — we only want nested fn items inside
-        if lang == Language::Rust && func_node.kind() == "impl_item" {
-            continue;
+        for func_node in func_nodes {
+            // For Rust impl_item, skip — we only want nested fn items inside
+            if lang == Language::Rust && func_node.kind() == "impl_item" {
+                continue;
+            }
+
+            let name = func_node
+                .child_by_field_name(name_field)
+                .map(|n| node_text(n, source_bytes).to_string())
+                .unwrap_or_else(|| "<anonymous>".to_string());
+
+            let complexity = 1 + count_branches(func_node, branch_kinds);
+            let line = node_start_line(func_node);
+            let end_line = node_end_line(func_node);
+
+            functions.push(FunctionInfo {
+                name,
+                file: file.to_string(),
+                line,
+                end_line,
+                complexity,
+                language: lang,
+            });
         }
 
-        let name = func_node
-            .child_by_field_name(name_field)
-            .map(|n| node_text(n, source_bytes).to_string())
-            .unwrap_or_else(|| "<anonymous>".to_string());
-
-        let complexity = 1 + count_branches(func_node, branch_kinds);
-        let line = node_start_line(func_node);
-        let end_line = node_end_line(func_node);
-
-        functions.push(FunctionInfo {
-            name,
-            file: file.to_string(),
-            line,
-            end_line,
-            complexity,
-            language: lang,
-        });
-    }
-
-    functions
+        functions
     })
 }
 
@@ -491,7 +514,7 @@ fn has_doc_comment_before(source: &str, line: usize, lang: Language) -> bool {
     }
     let lines: Vec<&str> = source.lines().collect();
     // Look at up to 5 lines above the node start (attributes like #[derive] may sit between)
-    let start = if line >= 5 { line - 5 } else { 0 };
+    let start = line.saturating_sub(5);
     for prev in (start..line - 1).rev() {
         let trimmed = lines.get(prev).map(|l| l.trim()).unwrap_or("");
         if trimmed.is_empty() {
@@ -502,17 +525,28 @@ fn has_doc_comment_before(source: &str, line: usize, lang: Language) -> bool {
             continue;
         }
         let is_doc = match lang {
-            Language::Rust => trimmed.starts_with("///") || trimmed.starts_with("/**") || trimmed.starts_with("//!"),
+            Language::Rust => {
+                trimmed.starts_with("///")
+                    || trimmed.starts_with("/**")
+                    || trimmed.starts_with("//!")
+            }
             Language::Python => {
                 // Python docstrings appear as the first statement inside the function body —
                 // handled separately via AST; here we check for a comment above.
                 trimmed.starts_with('#')
             }
             Language::JavaScript | Language::TypeScript => {
-                trimmed.starts_with("/**") || trimmed.starts_with("* ") || trimmed.starts_with("*/")
+                trimmed.starts_with("/**")
+                    || trimmed.starts_with("* ")
+                    || trimmed.starts_with("*/")
                     || trimmed.starts_with("//")
             }
-            Language::Go | Language::C | Language::Cpp | Language::CSharp | Language::Java | Language::Php => trimmed.starts_with("//") || trimmed.starts_with("/*"),
+            Language::Go
+            | Language::C
+            | Language::Cpp
+            | Language::CSharp
+            | Language::Java
+            | Language::Php => trimmed.starts_with("//") || trimmed.starts_with("/*"),
             Language::Unknown => false,
         };
         return is_doc;
@@ -555,12 +589,35 @@ fn public_item_kinds(lang: Language) -> &'static [&'static str] {
             "method_definition",
             "export_statement",
         ],
-        Language::Go => &["function_declaration", "method_declaration", "type_declaration"],
+        Language::Go => &[
+            "function_declaration",
+            "method_declaration",
+            "type_declaration",
+        ],
         Language::C => &["function_declarator", "struct_specifier", "enum_specifier"],
-        Language::Cpp => &["function_declarator", "class_specifier", "struct_specifier", "enum_specifier"],
-        Language::CSharp => &["method_declaration", "class_declaration", "struct_declaration", "interface_declaration"],
-        Language::Java => &["method_declaration", "class_declaration", "interface_declaration", "enum_declaration"],
-        Language::Php => &["function_definition", "class_declaration", "interface_declaration"],
+        Language::Cpp => &[
+            "function_declarator",
+            "class_specifier",
+            "struct_specifier",
+            "enum_specifier",
+        ],
+        Language::CSharp => &[
+            "method_declaration",
+            "class_declaration",
+            "struct_declaration",
+            "interface_declaration",
+        ],
+        Language::Java => &[
+            "method_declaration",
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+        ],
+        Language::Php => &[
+            "function_definition",
+            "class_declaration",
+            "interface_declaration",
+        ],
         Language::Unknown => &[],
     }
 }
@@ -577,7 +634,12 @@ fn rust_is_public(node: Node<'_>, source_bytes: &[u8]) -> bool {
     false
 }
 
-fn collect_public_items<'a>(node: Node<'a>, lang: Language, source_bytes: &[u8], out: &mut Vec<Node<'a>>) {
+fn collect_public_items<'a>(
+    node: Node<'a>,
+    lang: Language,
+    source_bytes: &[u8],
+    out: &mut Vec<Node<'a>>,
+) {
     let kinds = public_item_kinds(lang);
     if kinds.contains(&node.kind()) {
         let include = match lang {
@@ -603,26 +665,26 @@ fn collect_public_items<'a>(node: Node<'a>, lang: Language, source_bytes: &[u8],
 /// Parse doc coverage from source string.
 pub fn parse_doc_coverage(source: &str, lang: Language) -> DocStats {
     parse_with_tree(source, lang, |tree| {
-    let source_bytes = source.as_bytes();
-    let mut items = Vec::new();
-    collect_public_items(tree.root_node(), lang, source_bytes, &mut items);
+        let source_bytes = source.as_bytes();
+        let mut items = Vec::new();
+        collect_public_items(tree.root_node(), lang, source_bytes, &mut items);
 
-    let mut stats = DocStats::default();
-    for item in items {
-        stats.total_public += 1;
-        let line = node_start_line(item);
-        let documented = match lang {
-            Language::Python => {
-                python_fn_has_docstring(item, source_bytes)
-                    || has_doc_comment_before(source, line, lang)
+        let mut stats = DocStats::default();
+        for item in items {
+            stats.total_public += 1;
+            let line = node_start_line(item);
+            let documented = match lang {
+                Language::Python => {
+                    python_fn_has_docstring(item, source_bytes)
+                        || has_doc_comment_before(source, line, lang)
+                }
+                _ => has_doc_comment_before(source, line, lang),
+            };
+            if documented {
+                stats.documented += 1;
             }
-            _ => has_doc_comment_before(source, line, lang),
-        };
-        if documented {
-            stats.documented += 1;
         }
-    }
-    stats
+        stats
     })
 }
 
@@ -662,16 +724,44 @@ fn normalize_kind(kind: &str) -> Option<&'static str> {
         (&["if_expression", "if_statement"], "IF"),
         (&["else_clause", "elif_clause", "else"], "ELSE"),
         (&["while_expression", "while_statement"], "WHILE"),
-        (&["for_expression", "for_statement", "for_in_statement"], "FOR"),
+        (
+            &["for_expression", "for_statement", "for_in_statement"],
+            "FOR",
+        ),
         (&["loop_expression"], "LOOP"),
-        (&["match_expression", "switch_statement", "switch_case"], "MATCH"),
+        (
+            &["match_expression", "switch_statement", "switch_case"],
+            "MATCH",
+        ),
         (&["match_arm", "case_clause", "default_case"], "ARM"),
-        (&["let_declaration", "variable_declaration", "short_var_declaration", "assignment"], "LET"),
+        (
+            &[
+                "let_declaration",
+                "variable_declaration",
+                "short_var_declaration",
+                "assignment",
+            ],
+            "LET",
+        ),
         (&["return_expression", "return_statement"], "RET"),
-        (&["call_expression", "function_call", "method_call", "call"], "CALL"),
-        (&["closure_expression", "arrow_function", "lambda"], "LAMBDA"),
+        (
+            &["call_expression", "function_call", "method_call", "call"],
+            "CALL",
+        ),
+        (
+            &["closure_expression", "arrow_function", "lambda"],
+            "LAMBDA",
+        ),
         (&["block", "statement_block", "body"], "BLOCK"),
-        (&["try_expression", "try_statement", "except_clause", "catch_clause"], "TRY"),
+        (
+            &[
+                "try_expression",
+                "try_statement",
+                "except_clause",
+                "catch_clause",
+            ],
+            "TRY",
+        ),
     ];
     MAP.iter()
         .find(|(kinds, _)| kinds.contains(&kind))
@@ -700,20 +790,20 @@ fn fingerprint_recurse(node: Node<'_>, tokens: &mut Vec<&'static str>, depth: u3
 
 pub fn parse_fingerprints(source: &str, file: &str, lang: Language) -> Vec<BlockFingerprint> {
     parse_with_tree(source, lang, |tree| {
-    let func_kinds = function_node_kinds(lang);
-    let mut func_nodes = Vec::new();
-    collect_functions(tree.root_node(), func_kinds, &mut func_nodes);
+        let func_kinds = function_node_kinds(lang);
+        let mut func_nodes = Vec::new();
+        collect_functions(tree.root_node(), func_kinds, &mut func_nodes);
 
-    func_nodes
-        .into_iter()
-        .filter(|n| !(lang == Language::Rust && n.kind() == "impl_item"))
-        .map(|n| BlockFingerprint {
-            file: file.to_string(),
-            line: node_start_line(n),
-            end_line: node_end_line(n),
-            fingerprint: fingerprint_node(n),
-        })
-        .collect()
+        func_nodes
+            .into_iter()
+            .filter(|n| !(lang == Language::Rust && n.kind() == "impl_item"))
+            .map(|n| BlockFingerprint {
+                file: file.to_string(),
+                line: node_start_line(n),
+                end_line: node_end_line(n),
+                fingerprint: fingerprint_node(n),
+            })
+            .collect()
     })
 }
 
@@ -737,23 +827,28 @@ pub fn parse_fingerprints_file(path: &str) -> Vec<BlockFingerprint> {
 /// Extract all identifier names from source (for taint variable detection).
 pub fn parse_identifiers(source: &str, lang: Language) -> Vec<String> {
     parse_with_tree(source, lang, |tree| {
-    let source_bytes = source.as_bytes();
-    let mut ids = Vec::new();
-    collect_node_kind(tree.root_node(), "identifier", source_bytes, &mut ids);
-    ids.dedup();
-    ids
+        let source_bytes = source.as_bytes();
+        let mut ids = Vec::new();
+        collect_node_kind(tree.root_node(), "identifier", source_bytes, &mut ids);
+        ids.dedup();
+        ids
     })
 }
 
 /// Extract all string literal values from source (for taint sink detection).
 pub fn parse_string_literals(source: &str, lang: Language) -> Vec<String> {
     parse_with_tree(source, lang, |tree| {
-    let source_bytes = source.as_bytes();
-    let mut strings = Vec::new();
-    for kind in &["string_literal", "string", "interpreted_string_literal", "raw_string_literal"] {
-        collect_node_kind(tree.root_node(), kind, source_bytes, &mut strings);
-    }
-    strings
+        let source_bytes = source.as_bytes();
+        let mut strings = Vec::new();
+        for kind in &[
+            "string_literal",
+            "string",
+            "interpreted_string_literal",
+            "raw_string_literal",
+        ] {
+            collect_node_kind(tree.root_node(), kind, source_bytes, &mut strings);
+        }
+        strings
     })
 }
 
@@ -781,7 +876,11 @@ fn import_node_kinds(lang: Language) -> &'static [&'static str] {
         Language::C | Language::Cpp => &["preproc_include"],
         Language::CSharp => &["using_directive"],
         Language::Java => &["import_declaration"],
-        Language::Php => &["include_expression", "require_expression", "use_declaration"],
+        Language::Php => &[
+            "include_expression",
+            "require_expression",
+            "use_declaration",
+        ],
         Language::Unknown => &[],
     }
 }
@@ -813,7 +912,10 @@ fn extract_import_target(node: Node<'_>, source_bytes: &[u8], lang: Language) ->
         Language::JavaScript | Language::TypeScript => {
             // `import ... from "path"` or `require("path")`
             if let Some(src) = node.child_by_field_name("source") {
-                let raw = node_text(src, source_bytes).trim_matches('"').trim_matches('\'').to_string();
+                let raw = node_text(src, source_bytes)
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 return Some(raw);
             }
             // require() call
@@ -902,7 +1004,9 @@ fn extract_import_target(node: Node<'_>, source_bytes: &[u8], lang: Language) ->
             // `use Foo\Bar;` or `include/require "file.php";`
             let text = node_text(node, source_bytes).trim().to_string();
             if text.starts_with("use ") {
-                return Some(text[4..].trim_end_matches(';').trim().to_string());
+                if let Some(stripped) = text.strip_prefix("use ") {
+                    return Some(stripped.trim_end_matches(';').trim().to_string());
+                }
             }
             if text.starts_with("include") || text.starts_with("require") {
                 if let Some(start) = text.find('"') {
@@ -920,27 +1024,27 @@ fn extract_import_target(node: Node<'_>, source_bytes: &[u8], lang: Language) ->
 /// Parse imports from a source string.
 pub fn parse_imports(source: &str, file: &str, lang: Language) -> Vec<ImportInfo> {
     parse_with_tree(source, lang, |tree| {
-    let source_bytes = source.as_bytes();
-    let import_kinds = import_node_kinds(lang);
-    let mut import_nodes = Vec::new();
-    collect_import_nodes(tree.root_node(), import_kinds, &mut import_nodes);
+        let source_bytes = source.as_bytes();
+        let import_kinds = import_node_kinds(lang);
+        let mut import_nodes = Vec::new();
+        collect_import_nodes(tree.root_node(), import_kinds, &mut import_nodes);
 
-    let source_module = file.to_string();
-    let mut results = Vec::new();
+        let source_module = file.to_string();
+        let mut results = Vec::new();
 
-    for node in import_nodes {
-        if let Some(target) = extract_import_target(node, source_bytes, lang) {
-            if !target.is_empty() {
-                results.push(ImportInfo {
-                    source_module: source_module.clone(),
-                    imported_module: target,
-                    line: node_start_line(node),
-                });
+        for node in import_nodes {
+            if let Some(target) = extract_import_target(node, source_bytes, lang) {
+                if !target.is_empty() {
+                    results.push(ImportInfo {
+                        source_module: source_module.clone(),
+                        imported_module: target,
+                        line: node_start_line(node),
+                    });
+                }
             }
         }
-    }
 
-    results
+        results
     })
 }
 
@@ -1143,7 +1247,11 @@ fn bar(x: i32) -> i32 {
         let prints = parse_fingerprints(src, "test.rs", Language::Rust);
         assert_eq!(prints.len(), 2);
         let sim = fingerprint_similarity(&prints[0].fingerprint, &prints[1].fingerprint);
-        assert!(sim > 0.7, "identical-logic functions should be similar, got {:.2}", sim);
+        assert!(
+            sim > 0.7,
+            "identical-logic functions should be similar, got {:.2}",
+            sim
+        );
     }
 
     // ── Imports — Python ─────────────────────
@@ -1153,7 +1261,9 @@ fn bar(x: i32) -> i32 {
         let src = "import os\nfrom pathlib import Path\n";
         let imports = parse_imports(src, "test.py", Language::Python);
         assert!(!imports.is_empty());
-        assert!(imports.iter().any(|i| i.imported_module.contains("os") || i.imported_module.contains("pathlib")));
+        assert!(imports
+            .iter()
+            .any(|i| i.imported_module.contains("os") || i.imported_module.contains("pathlib")));
     }
 
     // ── Imports — JS ─────────────────────────

@@ -1,11 +1,18 @@
+#![deny(clippy::all)]
+
 use clap::Parser;
 use serde::Serialize;
 use std::collections::HashMap;
 
-use quality_common::{find_source_files, get_git_blame_batch, Column, print_table_header, print_table_row};
+use quality_common::{
+    find_source_files, get_git_blame_batch, print_table_header, print_table_row, Column,
+};
 
 #[derive(Parser)]
-#[command(name = "debt", about = "Technical debt scanner -- track TODO/FIXME/HACK/XXX markers")]
+#[command(
+    name = "debt",
+    about = "Technical debt scanner -- track TODO/FIXME/HACK/XXX markers"
+)]
 struct Cli {
     /// Path to scan (file or directory)
     path: String,
@@ -63,23 +70,25 @@ const MARKERS: &[(&str, &str)] = &[
     ("OPTIMIZE", "optimize"),
 ];
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    if let Err(e) = run(cli) {
-        eprintln!("{}", e);
-        std::process::exit(1);
-    }
+    run(cli)?;
+    Ok(())
 }
 
-fn run(cli: Cli) -> Result<(), String> {
-    let extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "rb", "php"];
+fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let extensions = [
+        "rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "rb", "php",
+    ];
     let files = find_source_files(&cli.path, cli.recursive, &extensions);
     if files.is_empty() {
-        return Err(format!("No source files found at {}", cli.path));
+        return Err(format!("No source files found at {}", cli.path).into());
     }
 
     let marker_filter = cli.marker.as_ref().map(|m| {
-        m.split(',').map(|s| s.trim().to_lowercase()).collect::<Vec<_>>()
+        m.split(',')
+            .map(|s| s.trim().to_lowercase())
+            .collect::<Vec<_>>()
     });
 
     let items = scan_files(&files, &marker_filter);
@@ -87,31 +96,45 @@ fn run(cli: Cli) -> Result<(), String> {
 
     match cli.format.as_str() {
         "json" => output_json(&items),
-        _ => output_table(&items),
+        _ => {
+            output_table(&items);
+            Ok(())
+        }
     }
-
-    Ok(())
 }
 
 fn scan_files(files: &[String], marker_filter: &Option<Vec<String>>) -> Vec<DebtItem> {
     let mut items = Vec::new();
     for file_path in files {
-        let Ok(source) = std::fs::read_to_string(file_path) else { continue };
+        let Ok(source) = std::fs::read_to_string(file_path) else {
+            continue;
+        };
         scan_source(file_path, &source, marker_filter, &mut items);
     }
     items
 }
 
-fn scan_source(file_path: &str, source: &str, marker_filter: &Option<Vec<String>>, items: &mut Vec<DebtItem>) {
+fn scan_source(
+    file_path: &str,
+    source: &str,
+    marker_filter: &Option<Vec<String>>,
+    items: &mut Vec<DebtItem>,
+) {
     // First pass: find all marker lines
     let mut marker_lines: Vec<(usize, &str, &str)> = Vec::new(); // (line_num, marker_name, marker_type)
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
         for (marker_name, marker_type) in MARKERS {
-            if !has_marker(trimmed, marker_name) { continue; }
-            if is_marker_in_string(trimmed, marker_name) { continue; }
-            if is_filtered_out(marker_filter, marker_type) { continue; }
+            if !has_marker(trimmed, marker_name) {
+                continue;
+            }
+            if is_marker_in_string(trimmed, marker_name) {
+                continue;
+            }
+            if is_filtered_out(marker_filter, marker_type) {
+                continue;
+            }
 
             marker_lines.push((line_num + 1, *marker_name, *marker_type));
             break; // Only count first matching marker per line
@@ -233,11 +256,23 @@ fn output_table(items: &[DebtItem]) {
 
     for item in items {
         let icon = match item.marker_type.as_str() {
-            "todo" => { todo += 1; "○" }
-            "fixme" => { fixme += 1; "⚠" }
-            "hack" => { hack += 1; "✗" }
-            "xxx" => { xxx += 1; "!" }
-            _ => "?"
+            "todo" => {
+                todo += 1;
+                "○"
+            }
+            "fixme" => {
+                fixme += 1;
+                "⚠"
+            }
+            "hack" => {
+                hack += 1;
+                "✗"
+            }
+            "xxx" => {
+                xxx += 1;
+                "!"
+            }
+            _ => "?",
         };
 
         let author = item.author.as_deref().unwrap_or("unknown");
@@ -245,13 +280,10 @@ fn output_table(items: &[DebtItem]) {
 
         let line_str = item.line.to_string();
         let type_str = format!("{} {}", icon, item.marker_type.to_uppercase());
-        print_table_row(&columns, &[
-            &type_str,
-            &item.file,
-            &line_str,
-            author,
-            &item.text,
-        ]);
+        print_table_row(
+            &columns,
+            &[&type_str, &item.file, &line_str, author, &item.text],
+        );
     }
 
     // Print summary
@@ -280,15 +312,24 @@ fn output_table(items: &[DebtItem]) {
     let debt_ratio = (fixme + hack + xxx) as f64 / items.len() as f64 * 100.0;
     println!();
     if debt_ratio > 50.0 {
-        println!("  ⚠ {:.0}% of markers are actionable (FIXME/HACK/XXX). High debt.", debt_ratio);
+        println!(
+            "  ⚠ {:.0}% of markers are actionable (FIXME/HACK/XXX). High debt.",
+            debt_ratio
+        );
     } else if debt_ratio > 20.0 {
-        println!("  ○ {:.0}% of markers are actionable. Moderate debt.", debt_ratio);
+        println!(
+            "  ○ {:.0}% of markers are actionable. Moderate debt.",
+            debt_ratio
+        );
     } else {
-        println!("  ✓ {:.0}% of markers are actionable. Low debt.", debt_ratio);
+        println!(
+            "  ✓ {:.0}% of markers are actionable. Low debt.",
+            debt_ratio
+        );
     }
 }
 
-fn output_json(items: &[DebtItem]) {
+fn output_json(items: &[DebtItem]) -> Result<(), Box<dyn std::error::Error>> {
     let mut todo = 0;
     let mut fixme = 0;
     let mut hack = 0;
@@ -319,6 +360,6 @@ fn output_json(items: &[DebtItem]) {
         },
     };
 
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
-

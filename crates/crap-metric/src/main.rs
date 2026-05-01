@@ -1,12 +1,17 @@
+#![deny(clippy::all)]
+
 use clap::Parser;
 use serde::Serialize;
 
 use ast_parse_ts::parse_complexity_file;
 use quality_common::{crap_category, crap_score, parse_lcov, CoverageRecord};
-use quality_common::{find_source_files, Column, print_table_header, print_table_row};
+use quality_common::{find_source_files, print_table_header, print_table_row, Column};
 
 #[derive(Parser)]
-#[command(name = "crap", about = "CRAP metric calculator — maintenance risk scoring")]
+#[command(
+    name = "crap",
+    about = "CRAP metric calculator — maintenance risk scoring"
+)]
 struct Cli {
     /// Path to analyze (file or directory)
     path: String,
@@ -62,11 +67,17 @@ struct Summary {
     excellent_count: usize,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Find all source files
-    let files = find_source_files(&cli.path, cli.recursive, &["rs", "py", "js", "ts", "go", "c", "cpp", "cs", "java", "php"]);
+    let files = find_source_files(
+        &cli.path,
+        cli.recursive,
+        &[
+            "rs", "py", "js", "ts", "go", "c", "cpp", "cs", "java", "php",
+        ],
+    );
     if files.is_empty() {
         eprintln!("No source files found at {}", cli.path);
         std::process::exit(1);
@@ -74,15 +85,26 @@ fn main() {
 
     // Load coverage if provided
     let coverage_data = cli.coverage.as_ref().and_then(|path| {
-        std::fs::read_to_string(path).ok().map(|content| parse_lcov(&content))
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|content| parse_lcov(&content))
     });
 
     // Analyze all files (skip CLI entry points and output formatting — not unit-testable)
     let mut all_functions = Vec::new();
     for file in &files {
         let functions = parse_complexity_file(file);
-        let skip: &[&str] = &["main", "output_table", "output_json", "output_ndjson", "run_self_test"];
-        let testable: Vec<_> = functions.into_iter().filter(|f| !skip.contains(&f.name.as_str())).collect();
+        let skip: &[&str] = &[
+            "main",
+            "output_table",
+            "output_json",
+            "output_ndjson",
+            "run_self_test",
+        ];
+        let testable: Vec<_> = functions
+            .into_iter()
+            .filter(|f| !skip.contains(&f.name.as_str()))
+            .collect();
         if testable.is_empty() {
             eprintln!("Warning: No functions found in {}", file);
         } else {
@@ -94,7 +116,7 @@ fn main() {
     let reports: Vec<FunctionReport> = all_functions
         .into_iter()
         .map(|func| {
-            let line_count = if func.end_line > func.line { func.end_line - func.line } else { 0 };
+            let line_count = func.end_line.saturating_sub(func.line);
             let coverage_pct = if let Some(ref cov_data) = coverage_data {
                 let func_cov = function_coverage(cov_data, &func.name);
                 if func_cov > 0.0 {
@@ -129,7 +151,10 @@ fn main() {
 
     match cli.format.as_str() {
         "json" => output_json(&sorted_reports),
-        _ => output_table(&sorted_reports),
+        _ => {
+            output_table(&sorted_reports);
+            Ok(())
+        }
     }
 }
 
@@ -157,11 +182,23 @@ fn output_table(reports: &[FunctionReport]) {
 
     for r in reports {
         let cat_icon = match r.category.as_str() {
-            "excellent" => { excellent += 1; "✓" }
-            "good" => { good += 1; "○" }
-            "acceptable" => { acceptable += 1; "△" }
-            "crappy" => { crappy += 1; "✗" }
-            _ => "?"
+            "excellent" => {
+                excellent += 1;
+                "✓"
+            }
+            "good" => {
+                good += 1;
+                "○"
+            }
+            "acceptable" => {
+                acceptable += 1;
+                "△"
+            }
+            "crappy" => {
+                crappy += 1;
+                "✗"
+            }
+            _ => "?",
         };
 
         let line_str = r.line.to_string();
@@ -169,15 +206,12 @@ fn output_table(reports: &[FunctionReport]) {
         let lc_str = r.line_count.to_string();
         let score_str = format!("{:.1}", r.crap_score);
         let cat_str = format!("{} {}", cat_icon, r.category);
-        print_table_row(&columns, &[
-            &r.name,
-            &r.file,
-            &line_str,
-            &comp_str,
-            &lc_str,
-            &score_str,
-            &cat_str,
-        ]);
+        print_table_row(
+            &columns,
+            &[
+                &r.name, &r.file, &line_str, &comp_str, &lc_str, &score_str, &cat_str,
+            ],
+        );
     }
 
     // Summary
@@ -188,28 +222,40 @@ fn output_table(reports: &[FunctionReport]) {
     let summary = vec![
         ("Functions analyzed:", total.to_string()),
         ("Total complexity:", total_comp.to_string()),
-        ("Avg complexity:", format!("{:.1}", total_comp as f64 / total as f64)),
-        ("Avg CRAP score:", format!("{:.1}", total_crap / total as f64)),
+        (
+            "Avg complexity:",
+            format!("{:.1}", total_comp as f64 / total as f64),
+        ),
+        (
+            "Avg CRAP score:",
+            format!("{:.1}", total_crap / total as f64),
+        ),
     ];
     quality_common::print_summary(&summary);
 
     println!();
-    println!("  {} excellent (≤10)  {} good (≤20)  {} acceptable (≤30)  {} crappy (>30)",
-        excellent, good, acceptable, crappy);
+    println!(
+        "  {} excellent (≤10)  {} good (≤20)  {} acceptable (≤30)  {} crappy (>30)",
+        excellent, good, acceptable, crappy
+    );
 
     if crappy > 0 {
         println!();
-        println!("  ⚠ {} function(s) with CRAP > 30 need refactoring or more tests.", crappy);
+        println!(
+            "  ⚠ {} function(s) with CRAP > 30 need refactoring or more tests.",
+            crappy
+        );
     }
 }
 
 fn function_coverage(coverage_records: &[CoverageRecord], func_name: &str) -> f64 {
-    coverage_records.iter()
+    coverage_records
+        .iter()
         .find(|r| r.function == func_name)
         .map_or(0.0, |r| if r.hits > 0 { 1.0 } else { 0.0 })
 }
 
-fn output_json(reports: &[FunctionReport]) {
+fn output_json(reports: &[FunctionReport]) -> Result<(), Box<dyn std::error::Error>> {
     let total = reports.len();
     let total_complexity: u32 = reports.iter().map(|r| r.complexity).sum();
     let total_crap: f64 = reports.iter().map(|r| r.crap_score).sum();
@@ -233,8 +279,16 @@ fn output_json(reports: &[FunctionReport]) {
         summary: Summary {
             total_functions: total,
             total_complexity,
-            avg_complexity: if total > 0 { total_complexity as f64 / total as f64 } else { 0.0 },
-            avg_crap: if total > 0 { total_crap / total as f64 } else { 0.0 },
+            avg_complexity: if total > 0 {
+                total_complexity as f64 / total as f64
+            } else {
+                0.0
+            },
+            avg_crap: if total > 0 {
+                total_crap / total as f64
+            } else {
+                0.0
+            },
             crappy_count: crappy,
             acceptable_count: acceptable,
             good_count: good,
@@ -242,6 +296,6 @@ fn output_json(reports: &[FunctionReport]) {
         },
     };
 
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
-

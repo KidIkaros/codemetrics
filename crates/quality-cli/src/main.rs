@@ -1,11 +1,13 @@
+#![deny(clippy::all)]
+
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::time::Instant;
 
 use ast_parse_ts::{parse_complexity_file, parse_doc_coverage_file, Language};
+use quality_common::memory::MemoryMonitor;
 use quality_common::{crap_score, parse_lcov, CoverageRecord};
 use quality_common::{find_source_files, ToolResult};
-use quality_common::memory::MemoryMonitor;
 
 // ═══════════════════════════════════════════
 // CLI DEFINITION
@@ -231,7 +233,13 @@ fn scan_source_functions<T, F>(path: &str, recursive: bool, mut predicate: F) ->
 where
     F: FnMut(&ast_parse_ts::FunctionInfo) -> Option<T>,
 {
-    let files = find_source_files(path, recursive, &["rs", "py", "js", "ts", "go", "java", "c", "cpp", "cs", "php"]);
+    let files = find_source_files(
+        path,
+        recursive,
+        &[
+            "rs", "py", "js", "ts", "go", "java", "c", "cpp", "cs", "php",
+        ],
+    );
     let mut total = 0;
     let mut results = Vec::new();
     for file in files {
@@ -247,12 +255,18 @@ where
 }
 
 fn function_coverage(coverage_records: &[CoverageRecord], func_name: &str) -> f64 {
-    coverage_records.iter()
+    coverage_records
+        .iter()
         .find(|r| r.function == func_name)
         .map_or(0.0, |r| if r.hits > 0 { 1.0 } else { 0.0 })
 }
 
-fn check_crap(path: &str, recursive: bool, coverage_path: &Option<String>, max_crap: f64) -> CheckResult {
+fn check_crap(
+    path: &str,
+    recursive: bool,
+    coverage_path: &Option<String>,
+    max_crap: f64,
+) -> CheckResult {
     let coverage_data: Option<Vec<CoverageRecord>> = coverage_path.as_ref().map(|p| parse_lcov(p));
     let (total, functions) = scan_source_functions(path, recursive, |func| {
         let cov_pct = if let Some(ref cov_data) = coverage_data {
@@ -278,7 +292,12 @@ fn check_crap(path: &str, recursive: bool, coverage_path: &Option<String>, max_c
         message: if avg_crap <= max_crap {
             format!("Average CRAP {:.1} <= {:.0}", avg_crap, max_crap)
         } else {
-            format!("Average CRAP {:.1} > {:.0} ({} functions above 30)", avg_crap, max_crap, crappy.len())
+            format!(
+                "Average CRAP {:.1} > {:.0} ({} functions above 30)",
+                avg_crap,
+                max_crap,
+                crappy.len()
+            )
         },
         details: serde_json::json!({
             "total_functions": total,
@@ -295,7 +314,9 @@ fn check_crap(path: &str, recursive: bool, coverage_path: &Option<String>, max_c
 }
 
 fn check_debt(path: &str, recursive: bool, max_debt: usize) -> CheckResult {
-    let extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "cs", "php"];
+    let extensions = [
+        "rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "cs", "php",
+    ];
     let files = find_source_files(path, recursive, &extensions);
 
     let markers = ["TODO", "FIXME", "HACK", "XXX", "BUG"];
@@ -306,7 +327,10 @@ fn check_debt(path: &str, recursive: bool, max_debt: usize) -> CheckResult {
         if let Ok(source) = std::fs::read_to_string(file) {
             for (line_num, line) in source.lines().enumerate() {
                 let trimmed = line.trim();
-                if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with('*')
+                {
                     for marker in &markers {
                         if trimmed.contains(marker) {
                             count += 1;
@@ -340,36 +364,49 @@ fn check_debt(path: &str, recursive: bool, max_debt: usize) -> CheckResult {
 use syn::visit::Visit;
 use syn::{ImplItemFn, ItemEnum, ItemFn, ItemStruct, ItemTrait, Visibility};
 
-struct DocCounter { total: usize, documented: usize }
+struct DocCounter {
+    total: usize,
+    documented: usize,
+}
 impl<'a> Visit<'a> for DocCounter {
     fn visit_item_fn(&mut self, node: &'a ItemFn) {
         if matches!(node.vis, Visibility::Public(_)) {
             self.total += 1;
-            if node.attrs.iter().any(|a| a.path().is_ident("doc")) { self.documented += 1; }
+            if node.attrs.iter().any(|a| a.path().is_ident("doc")) {
+                self.documented += 1;
+            }
         }
     }
     fn visit_item_struct(&mut self, node: &'a ItemStruct) {
         if matches!(node.vis, Visibility::Public(_)) {
             self.total += 1;
-            if node.attrs.iter().any(|a| a.path().is_ident("doc")) { self.documented += 1; }
+            if node.attrs.iter().any(|a| a.path().is_ident("doc")) {
+                self.documented += 1;
+            }
         }
     }
     fn visit_item_enum(&mut self, node: &'a ItemEnum) {
         if matches!(node.vis, Visibility::Public(_)) {
             self.total += 1;
-            if node.attrs.iter().any(|a| a.path().is_ident("doc")) { self.documented += 1; }
+            if node.attrs.iter().any(|a| a.path().is_ident("doc")) {
+                self.documented += 1;
+            }
         }
     }
     fn visit_item_trait(&mut self, node: &'a ItemTrait) {
         if matches!(node.vis, Visibility::Public(_)) {
             self.total += 1;
-            if node.attrs.iter().any(|a| a.path().is_ident("doc")) { self.documented += 1; }
+            if node.attrs.iter().any(|a| a.path().is_ident("doc")) {
+                self.documented += 1;
+            }
         }
     }
     fn visit_impl_item_fn(&mut self, node: &'a ImplItemFn) {
         if matches!(node.vis, Visibility::Public(_)) {
             self.total += 1;
-            if node.attrs.iter().any(|a| a.path().is_ident("doc")) { self.documented += 1; }
+            if node.attrs.iter().any(|a| a.path().is_ident("doc")) {
+                self.documented += 1;
+            }
         }
     }
 }
@@ -384,7 +421,10 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
     if !rust_files.is_empty() {
         langs_seen.insert("rust".to_string());
     }
-    let mut counter = DocCounter { total: 0, documented: 0 };
+    let mut counter = DocCounter {
+        total: 0,
+        documented: 0,
+    };
     for file in &rust_files {
         if let Ok(source) = std::fs::read_to_string(file) {
             if let Ok(ast) = syn::parse_file(&source) {
@@ -426,9 +466,19 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
         score: Some(pct),
         threshold: Some(min_doc),
         message: if pct >= min_doc {
-            format!("Doc coverage {:.0}% >= {:.0}% (langs: {})", pct, min_doc, langs_vec.join(", "))
+            format!(
+                "Doc coverage {:.0}% >= {:.0}% (langs: {})",
+                pct,
+                min_doc,
+                langs_vec.join(", ")
+            )
         } else {
-            format!("Doc coverage {:.0}% < {:.0}% (langs: {})", pct, min_doc, langs_vec.join(", "))
+            format!(
+                "Doc coverage {:.0}% < {:.0}% (langs: {})",
+                pct,
+                min_doc,
+                langs_vec.join(", ")
+            )
         },
         details: serde_json::json!({
             "total_public": total,
@@ -440,7 +490,10 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
 }
 
 fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckResult {
-    let all_exts = ["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
+    let all_exts = [
+        "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc",
+        "cxx", "hpp", "cs", "java", "php",
+    ];
     let files = find_source_files(path, recursive, &all_exts);
 
     let mut total = 0usize;
@@ -474,9 +527,17 @@ fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckRe
         score: Some(complex_funcs.len() as f64),
         threshold: Some(0.0),
         message: if complex_funcs.is_empty() {
-            format!("No functions above complexity threshold (languages: {})", langs_vec.join(", "))
+            format!(
+                "No functions above complexity threshold (languages: {})",
+                langs_vec.join(", ")
+            )
         } else {
-            format!("{} functions with complexity >= {} (languages: {})", complex_funcs.len(), min_complexity, langs_vec.join(", "))
+            format!(
+                "{} functions with complexity >= {} (languages: {})",
+                complex_funcs.len(),
+                min_complexity,
+                langs_vec.join(", ")
+            )
         },
         details: serde_json::json!({
             "total_functions": total,
@@ -496,22 +557,32 @@ fn output_json(report: &CheckReport) {
 }
 
 fn output_text(report: &CheckReport) {
-    println!("QUALITY CHECK: {}", if report.passed { "PASSED" } else { "FAILED" });
+    println!(
+        "QUALITY CHECK: {}",
+        if report.passed { "PASSED" } else { "FAILED" }
+    );
     println!("Path: {}", report.path);
     println!("{}", "─".repeat(60));
 
     for check in &report.checks {
         let icon = if check.passed { "✓" } else { "✗" };
         let score_str = check.score.map(|s| format!("{:.1}", s)).unwrap_or_default();
-        let thresh_str = check.threshold.map(|t| format!("{:.0}", t)).unwrap_or_default();
+        let thresh_str = check
+            .threshold
+            .map(|t| format!("{:.0}", t))
+            .unwrap_or_default();
 
-        println!("  {} {:<15} {:>8} (threshold: {}) — {}",
-            icon, check.name, score_str, thresh_str, check.message);
+        println!(
+            "  {} {:<15} {:>8} (threshold: {}) — {}",
+            icon, check.name, score_str, thresh_str, check.message
+        );
     }
 
     println!("{}", "─".repeat(60));
-    println!("  Checks: {}/{} passed",
-        report.summary.passed_checks, report.summary.total_checks);
+    println!(
+        "  Checks: {}/{} passed",
+        report.summary.passed_checks, report.summary.total_checks
+    );
     println!("  Functions: {}", report.summary.functions_analyzed);
     println!("  Avg complexity: {:.1}", report.summary.avg_complexity);
     println!("  Avg CRAP: {:.1}", report.summary.avg_crap);
@@ -553,16 +624,20 @@ fn main() {
 
     let exit_code = match cli.command {
         Commands::Check {
-            path, recursive, format, coverage,
-            max_crap, min_doc, max_debt, skip,
+            path,
+            recursive,
+            format,
+            coverage,
+            max_crap,
+            min_doc,
+            max_debt,
+            skip,
         } => {
             let skip_list: Vec<String> = skip
                 .map(|s| s.split(',').map(|s| s.trim().to_lowercase()).collect())
                 .unwrap_or_default();
 
-            let should_run = |name: &str| -> bool {
-                !skip_list.contains(&name.to_string())
-            };
+            let should_run = |name: &str| -> bool { !skip_list.contains(&name.to_string()) };
 
             let mut checks = Vec::new();
 
@@ -580,7 +655,8 @@ fn main() {
             }
 
             let passed = checks.iter().all(|c| c.passed);
-            let total_funcs: usize = checks.iter()
+            let total_funcs: usize = checks
+                .iter()
                 .filter_map(|c| c.details.get("total_functions").and_then(|v| v.as_u64()))
                 .map(|v| v as usize)
                 .sum();
@@ -608,37 +684,67 @@ fn main() {
                 _ => output_json(&report),
             }
 
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
-        Commands::Crap { path, recursive, coverage, format } => {
+        Commands::Crap {
+            path,
+            recursive,
+            coverage,
+            format,
+        } => {
             let result = check_crap(&path, recursive, &coverage, 30.0);
             let passed = result.passed;
             match format.as_str() {
                 "text" => println!("{}", result.message),
                 _ => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
             }
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
-        Commands::Debt { path, recursive, marker: _, format } => {
+        Commands::Debt {
+            path,
+            recursive,
+            marker: _,
+            format,
+        } => {
             let result = check_debt(&path, recursive, 1000);
             let passed = result.passed;
             match format.as_str() {
                 "text" => println!("{}", result.message),
                 _ => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
             }
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
-        Commands::Doccov { path, recursive, format } => {
+        Commands::Doccov {
+            path,
+            recursive,
+            format,
+        } => {
             let result = check_doc_coverage(&path, recursive, 0.0);
             let passed = result.passed;
             match format.as_str() {
                 "text" => println!("{}", result.message),
                 _ => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
             }
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
         Commands::Dupfind { .. } => {
@@ -646,14 +752,23 @@ fn main() {
             2
         }
 
-        Commands::Complexity { path, recursive, min_complexity, format } => {
+        Commands::Complexity {
+            path,
+            recursive,
+            min_complexity,
+            format,
+        } => {
             let result = check_complexity(&path, recursive, min_complexity);
             let passed = result.passed;
             match format.as_str() {
                 "text" => println!("{}", result.message),
                 _ => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
             }
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
         Commands::Init { output } => {
@@ -661,36 +776,42 @@ fn main() {
             0
         }
 
-        Commands::Run { path, config, format, baseline, no_fail_on_regression } => {
-            run_batch(&path, &config, &format, baseline.as_deref(), no_fail_on_regression)
-        }
+        Commands::Run {
+            path,
+            config,
+            format,
+            baseline,
+            no_fail_on_regression,
+        } => run_batch(
+            &path,
+            &config,
+            &format,
+            baseline.as_deref(),
+            no_fail_on_regression,
+        ),
 
-        Commands::History { action, dir, last, report } => {
-            history_command(&action, &dir, last, report.as_deref())
-        }
+        Commands::History {
+            action,
+            dir,
+            last,
+            report,
+        } => history_command(&action, &dir, last, report.as_deref()),
 
-        Commands::InstallHooks { repo } => {
-            install_hooks(&repo)
-        }
+        Commands::InstallHooks { repo } => install_hooks(&repo),
 
-        Commands::UninstallHooks { repo } => {
-            uninstall_hooks(&repo)
-        }
+        Commands::UninstallHooks { repo } => uninstall_hooks(&repo),
 
-        Commands::Watch { path, checks, debounce_ms } => {
-            watch_mode(&path, &checks, debounce_ms)
-        }
+        Commands::Watch {
+            path,
+            checks,
+            debounce_ms,
+        } => watch_mode(&path, &checks, debounce_ms),
     };
 
     std::process::exit(exit_code);
 }
 
-fn run_tool(
-    crate_name: &str,
-    bin_name: &str,
-    args: &[&str],
-    tool_start: Instant,
-) -> ToolResult {
+fn run_tool(crate_name: &str, bin_name: &str, args: &[&str], tool_start: Instant) -> ToolResult {
     use quality_common::*;
     use std::process::{Command, Stdio};
 
@@ -752,7 +873,13 @@ fn run_tool(
     }
 }
 
-fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no_fail_on_regression: bool) -> i32 {
+fn run_batch(
+    path: &str,
+    _config: &str,
+    format: &str,
+    baseline: Option<&str>,
+    no_fail_on_regression: bool,
+) -> i32 {
     use quality_common::*;
 
     use std::time::Instant;
@@ -761,21 +888,64 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
 
     // Initialize memory monitor (auto-terminates if memory exceeds safe threshold)
     let mut memory_monitor = MemoryMonitor::from_env();
-    eprintln!("Memory monitor initialized with limit: {} MB", memory_monitor.max_rss_bytes / 1024 / 1024);
+    eprintln!(
+        "Memory monitor initialized with limit: {} MB",
+        memory_monitor.max_rss_bytes / 1024 / 1024
+    );
 
     let tools: Vec<(&str, &str, Vec<&str>)> = vec![
-        ("debt-scan", "debt", vec!["--recursive", path, "--format", "json"]),
-        ("doc-coverage", "doccov", vec!["--recursive", path, "--format", "json"]),
-        ("crap-metric", "crap", vec!["--recursive", path, "--format", "json"]),
+        (
+            "debt-scan",
+            "debt",
+            vec!["--recursive", path, "--format", "json"],
+        ),
+        (
+            "doc-coverage",
+            "doccov",
+            vec!["--recursive", path, "--format", "json"],
+        ),
+        (
+            "crap-metric",
+            "crap",
+            vec!["--recursive", path, "--format", "json"],
+        ),
         ("coupling", "coupling", vec![path, "--format", "json"]),
         ("risk-map", "riskmap", vec![path, "--format", "json"]),
-        ("duplication", "dupfind", vec!["--recursive", path, "--format", "json"]),
-        ("prop-cov", "propcov", vec!["--recursive", path, "--format", "json"]),
-        ("taint-scan", "taint", vec!["--recursive", path, "--format", "json"]),
-        ("fuzz-surface", "fuzz", vec!["--recursive", path, "--format", "json"]),
+        (
+            "duplication",
+            "dupfind",
+            vec!["--recursive", path, "--format", "json"],
+        ),
+        (
+            "prop-cov",
+            "propcov",
+            vec!["--recursive", path, "--format", "json"],
+        ),
+        (
+            "taint-scan",
+            "taint",
+            vec!["--recursive", path, "--format", "json"],
+        ),
+        (
+            "fuzz-surface",
+            "fuzz",
+            vec!["--recursive", path, "--format", "json"],
+        ),
         // mutation-test: run with capped mutants and enforced timeout.
         // Uses scratch workspace + watchdog kill — safe to include in batch.
-        ("mutation-test", "mutate", vec![path, "--max-mutants", "5", "--timeout", "30", "--format", "json"]),
+        (
+            "mutation-test",
+            "mutate",
+            vec![
+                path,
+                "--max-mutants",
+                "5",
+                "--timeout",
+                "30",
+                "--format",
+                "json",
+            ],
+        ),
     ];
 
     // Run tools sequentially to prevent memory exhaustion
@@ -786,7 +956,10 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
 
         // Check memory before starting tool
         if let Err(usage) = memory_monitor.check() {
-            eprintln!("❌ Memory limit exceeded before running {}. Stopping batch.", bin_name);
+            eprintln!(
+                "❌ Memory limit exceeded before running {}. Stopping batch.",
+                bin_name
+            );
             eprintln!("   Current usage: {} MB", usage.rss_bytes / 1024 / 1024);
             break;
         }
@@ -798,7 +971,10 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
 
         // Check memory after tool completion
         if let Err(usage) = memory_monitor.check() {
-            eprintln!("❌ Memory limit exceeded after running {}. Stopping batch.", bin_name);
+            eprintln!(
+                "❌ Memory limit exceeded after running {}. Stopping batch.",
+                bin_name
+            );
             eprintln!("   Current usage: {} MB", usage.rss_bytes / 1024 / 1024);
             break;
         }
@@ -815,13 +991,24 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
     if let Some(baseline_file) = baseline {
         if let Ok(baseline_content) = std::fs::read_to_string(baseline_file) {
             if let Ok(baseline_report) = serde_json::from_str::<UnifiedReport>(&baseline_content) {
-                let baseline_tools: std::collections::HashSet<String> =
-                    baseline_report.tools.iter().filter(|t| t.success).map(|t| t.tool.clone()).collect();
-                let current_tools: std::collections::HashSet<String> =
-                    results.iter().filter(|t| t.success).map(|t| t.tool.clone()).collect();
-                let regressed: Vec<String> = baseline_tools.difference(&current_tools).cloned().collect();
+                let baseline_tools: std::collections::HashSet<String> = baseline_report
+                    .tools
+                    .iter()
+                    .filter(|t| t.success)
+                    .map(|t| t.tool.clone())
+                    .collect();
+                let current_tools: std::collections::HashSet<String> = results
+                    .iter()
+                    .filter(|t| t.success)
+                    .map(|t| t.tool.clone())
+                    .collect();
+                let regressed: Vec<String> =
+                    baseline_tools.difference(&current_tools).cloned().collect();
                 if !regressed.is_empty() {
-                    eprintln!("BASELINE REGRESSION: previously-passing tools now failing: {:?}", regressed);
+                    eprintln!(
+                        "BASELINE REGRESSION: previously-passing tools now failing: {:?}",
+                        regressed
+                    );
                     if !no_fail_on_regression {
                         regression_detected = true;
                     }
@@ -843,11 +1030,16 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
                         rule_index: None,
                         level: "error".to_string(),
                         message: SarifMessage {
-                            text: tool.error.clone().unwrap_or_else(|| format!("{} failed", tool.tool)),
+                            text: tool
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| format!("{} failed", tool.tool)),
                         },
                         locations: vec![SarifLocation {
                             physical_location: SarifPhysicalLocation {
-                                artifact_location: Some(SarifArtifactLocation { uri: path.to_string() }),
+                                artifact_location: Some(SarifArtifactLocation {
+                                    uri: path.to_string(),
+                                }),
                                 region: None,
                             },
                         }],
@@ -873,7 +1065,10 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
                     .to_string(),
             );
             // Detect languages from source files at path
-            let all_exts = ["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
+            let all_exts = [
+                "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp",
+                "cc", "cxx", "hpp", "cs", "java", "php",
+            ];
             let mut langs_detected: Vec<String> = find_source_files(path, true, &all_exts)
                 .iter()
                 .map(|f| ast_parse_ts::Language::from_extension(f).to_string())
@@ -910,7 +1105,8 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
                 }
             }
             println!("───────────────────────────────────────────");
-            println!("  Total: {}  Passed: {}  Failed: {}",
+            println!(
+                "  Total: {}  Passed: {}  Failed: {}",
                 tools.len(),
                 passed,
                 failed,
@@ -919,7 +1115,11 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
         }
     }
 
-    if failed > 0 || regression_detected { 1 } else { 0 }
+    if failed > 0 || regression_detected {
+        1
+    } else {
+        0
+    }
 }
 
 // ═══════════════════════════════════════════
@@ -929,29 +1129,37 @@ fn run_batch(path: &str, _config: &str, format: &str, baseline: Option<&str>, no
 fn output_ndjson(report: &CheckReport) {
     for check in &report.checks {
         if !check.passed {
-            let items = check.details.get("items")
+            let items = check
+                .details
+                .get("items")
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
             if items.is_empty() {
-                println!("{}", serde_json::json!({
-                    "tool": check.name,
-                    "severity": "warning",
-                    "message": check.message,
-                    "file": report.path,
-                    "line": null,
-                    "col": null,
-                }));
-            } else {
-                for item in &items {
-                    println!("{}", serde_json::json!({
+                println!(
+                    "{}",
+                    serde_json::json!({
                         "tool": check.name,
                         "severity": "warning",
-                        "message": item.get("type").and_then(|v| v.as_str()).unwrap_or(&check.name),
-                        "file": item.get("file"),
-                        "line": item.get("line"),
+                        "message": check.message,
+                        "file": report.path,
+                        "line": null,
                         "col": null,
-                    }));
+                    })
+                );
+            } else {
+                for item in &items {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "tool": check.name,
+                            "severity": "warning",
+                            "message": item.get("type").and_then(|v| v.as_str()).unwrap_or(&check.name),
+                            "file": item.get("file"),
+                            "line": item.get("line"),
+                            "col": null,
+                        })
+                    );
                 }
             }
         }
@@ -965,7 +1173,8 @@ fn output_ndjson(report: &CheckReport) {
 fn history_command(action: &str, dir: &str, last: usize, report_path: Option<&str>) -> i32 {
     match action {
         "record" => history_record(dir, report_path),
-        "show" | _ => history_show(dir, last),
+        "show" => history_show(dir, last),
+        _ => history_show(dir, last),
     }
 }
 
@@ -975,7 +1184,10 @@ fn history_record(dir: &str, report_path: Option<&str>) -> i32 {
     let json_str = if let Some(path) = report_path {
         match std::fs::read_to_string(path) {
             Ok(s) => s,
-            Err(e) => { eprintln!("history record: cannot read {}: {}", path, e); return 1; }
+            Err(e) => {
+                eprintln!("history record: cannot read {}: {}", path, e);
+                return 1;
+            }
         }
     } else {
         let mut buf = String::new();
@@ -988,7 +1200,10 @@ fn history_record(dir: &str, report_path: Option<&str>) -> i32 {
 
     let report: serde_json::Value = match serde_json::from_str(&json_str) {
         Ok(v) => v,
-        Err(e) => { eprintln!("history record: invalid JSON: {}", e); return 1; }
+        Err(e) => {
+            eprintln!("history record: invalid JSON: {}", e);
+            return 1;
+        }
     };
 
     let ts = std::time::SystemTime::now()
@@ -1010,10 +1225,13 @@ fn history_record(dir: &str, report_path: Option<&str>) -> i32 {
             let mut m = serde_json::Map::new();
             for t in arr {
                 if let Some(name) = t.get("tool").and_then(|v| v.as_str()) {
-                    m.insert(name.to_string(), serde_json::json!({
-                        "success": t.get("success"),
-                        "duration_ms": t.get("duration_ms"),
-                    }));
+                    m.insert(
+                        name.to_string(),
+                        serde_json::json!({
+                            "success": t.get("success"),
+                            "duration_ms": t.get("duration_ms"),
+                        }),
+                    );
                 }
             }
             serde_json::Value::Object(m)
@@ -1030,8 +1248,13 @@ fn history_record(dir: &str, report_path: Option<&str>) -> i32 {
 
     let line = serde_json::to_string(&record).unwrap_or_default();
     if let Err(e) = std::fs::OpenOptions::new()
-        .create(true).append(true).open(&path)
-        .and_then(|mut f| { use std::io::Write; writeln!(f, "{}", line) })
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| {
+            use std::io::Write;
+            writeln!(f, "{}", line)
+        })
     {
         eprintln!("history record: write failed: {}", e);
         return 1;
@@ -1053,7 +1276,7 @@ fn history_show(dir: &str, last: usize) -> i32 {
     let mut lines: Vec<String> = Vec::new();
     let mut files: Vec<_> = entries
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |x| x == "jsonl"))
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
         .collect();
     files.sort_by_key(|e| e.file_name());
 
@@ -1078,16 +1301,26 @@ fn history_show(dir: &str, last: usize) -> i32 {
             let ts = rec.get("ts").and_then(|v| v.as_u64()).unwrap_or(0);
             let passed = rec.get("passed").and_then(|v| v.as_u64()).unwrap_or(0);
             let failed = rec.get("failed").and_then(|v| v.as_u64()).unwrap_or(0);
-            let tools_str = rec.get("tools")
+            let tools_str = rec
+                .get("tools")
                 .and_then(|v| v.as_object())
-                .map(|m| m.iter()
-                    .map(|(k, v)| {
-                        let ok = v.get("success").and_then(|b| b.as_bool()).unwrap_or(false);
-                        format!("{}:{}", k, if ok { "✓" } else { "✗" })
-                    })
-                    .collect::<Vec<_>>().join("  "))
+                .map(|m| {
+                    m.iter()
+                        .map(|(k, v)| {
+                            let ok = v.get("success").and_then(|b| b.as_bool()).unwrap_or(false);
+                            format!("{}:{}", k, if ok { "✓" } else { "✗" })
+                        })
+                        .collect::<Vec<_>>()
+                        .join("  ")
+                })
                 .unwrap_or_default();
-            println!("{:<20} {:>6} {:>6}  {}", format_ts(ts), passed, failed, tools_str);
+            println!(
+                "{:<20} {:>6} {:>6}  {}",
+                format_ts(ts),
+                passed,
+                failed,
+                tools_str
+            );
         }
     }
     println!();
@@ -1126,12 +1359,18 @@ fn install_hooks(repo: &str) -> i32 {
     let hook_path = format!("{}/pre-commit", hook_dir);
 
     if !std::path::Path::new(&hook_dir).exists() {
-        eprintln!("install-hooks: {} is not a git repository (no .git/hooks directory)", repo);
+        eprintln!(
+            "install-hooks: {} is not a git repository (no .git/hooks directory)",
+            repo
+        );
         return 1;
     }
 
     if std::path::Path::new(&hook_path).exists() {
-        eprintln!("install-hooks: hook already exists at {} -- remove it first or use uninstall-hooks", hook_path);
+        eprintln!(
+            "install-hooks: hook already exists at {} -- remove it first or use uninstall-hooks",
+            hook_path
+        );
         return 1;
     }
 
@@ -1152,7 +1391,10 @@ fi
 
     match std::fs::write(&hook_path, hook_script) {
         Ok(_) => {}
-        Err(e) => { eprintln!("install-hooks: write failed: {}", e); return 1; }
+        Err(e) => {
+            eprintln!("install-hooks: write failed: {}", e);
+            return 1;
+        }
     }
 
     #[cfg(unix)]
@@ -1180,13 +1422,22 @@ fn uninstall_hooks(repo: &str) -> i32 {
 
     let content = std::fs::read_to_string(&hook_path).unwrap_or_default();
     if !content.contains("quality pre-commit hook") {
-        eprintln!("uninstall-hooks: {} exists but was not installed by quality -- refusing to remove", hook_path);
+        eprintln!(
+            "uninstall-hooks: {} exists but was not installed by quality -- refusing to remove",
+            hook_path
+        );
         return 1;
     }
 
     match std::fs::remove_file(&hook_path) {
-        Ok(_) => { println!("Removed pre-commit hook from {}", hook_path); 0 }
-        Err(e) => { eprintln!("uninstall-hooks: remove failed: {}", e); 1 }
+        Ok(_) => {
+            println!("Removed pre-commit hook from {}", hook_path);
+            0
+        }
+        Err(e) => {
+            eprintln!("uninstall-hooks: remove failed: {}", e);
+            1
+        }
     }
 }
 
@@ -1199,9 +1450,7 @@ fn watch_mode(path: &str, checks: &str, debounce_ms: u64) -> i32 {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
-    let check_list: Vec<String> = checks.split(',')
-        .map(|s| s.trim().to_lowercase())
-        .collect();
+    let check_list: Vec<String> = checks.split(',').map(|s| s.trim().to_lowercase()).collect();
 
     println!("quality watch: watching {} for .rs changes", path);
     println!("  checks: {}", check_list.join(", "));
@@ -1211,7 +1460,10 @@ fn watch_mode(path: &str, checks: &str, debounce_ms: u64) -> i32 {
     let (tx, rx) = mpsc::channel::<Result<Event, notify::Error>>();
     let mut watcher = match RecommendedWatcher::new(tx, Config::default()) {
         Ok(w) => w,
-        Err(e) => { eprintln!("watch: failed to create watcher: {}", e); return 1; }
+        Err(e) => {
+            eprintln!("watch: failed to create watcher: {}", e);
+            return 1;
+        }
     };
 
     if let Err(e) = watcher.watch(std::path::Path::new(path), RecursiveMode::Recursive) {
@@ -1225,23 +1477,30 @@ fn watch_mode(path: &str, checks: &str, debounce_ms: u64) -> i32 {
     loop {
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Ok(event)) => {
-                let is_rust = event.paths.iter().any(|p| {
-                    p.extension().map_or(false, |e| e == "rs")
-                });
-                if !is_rust { continue; }
+                let is_rust = event
+                    .paths
+                    .iter()
+                    .any(|p| p.extension().is_some_and(|e| e == "rs"));
+                if !is_rust {
+                    continue;
+                }
 
                 let now = Instant::now();
                 let should_run = last_run.map_or(true, |t| now.duration_since(t) >= debounce);
                 if should_run {
                     last_run = Some(now);
-                    let changed: Vec<_> = event.paths.iter()
+                    let changed: Vec<_> = event
+                        .paths
+                        .iter()
                         .map(|p| p.display().to_string())
                         .collect();
                     eprintln!("\n[watch] changed: {}", changed.join(", "));
                     run_watch_checks(path, &check_list);
                 }
             }
-            Ok(Err(e)) => { eprintln!("watch error: {}", e); }
+            Ok(Err(e)) => {
+                eprintln!("watch error: {}", e);
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -1275,7 +1534,8 @@ fn run_watch_checks(path: &str, check_list: &[String]) {
     let all_passed = results.iter().all(|(_, p, _)| *p);
     let status = if all_passed { "✓ PASS" } else { "✗ FAIL" };
 
-    let line: Vec<String> = results.iter()
+    let line: Vec<String> = results
+        .iter()
         .map(|(name, passed, _)| format!("{}: {}", name, if *passed { "✓" } else { "✗" }))
         .collect();
 

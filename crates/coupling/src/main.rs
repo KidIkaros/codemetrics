@@ -1,13 +1,18 @@
+#![deny(clippy::all)]
+
+use ast_parse_ts::parse_imports_file;
 use clap::Parser;
+use quality_common::find_source_files;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use ast_parse_ts::parse_imports_file;
-use quality_common::find_source_files;
 
 #[derive(Parser)]
-#[command(name = "coupling", about = "Coupling analysis -- module dependency graphs, fan-in/fan-out")]
+#[command(
+    name = "coupling",
+    about = "Coupling analysis -- module dependency graphs, fan-in/fan-out"
+)]
 struct Cli {
     /// Path to scan (directory with src/)
     path: String,
@@ -24,11 +29,11 @@ struct Cli {
 #[derive(Debug, Clone, Serialize)]
 struct ModuleInfo {
     name: String,
-    imports: Vec<String>,     // modules this one depends on
-    imported_by: Vec<String>, // modules that depend on this one
-    fan_out: usize,           // how many modules I depend on
-    fan_in: usize,            // how many modules depend on me
-    instability: f64,         // fan_out / (fan_in + fan_out)
+    imports: Vec<String>,       // modules this one depends on
+    imported_by: Vec<String>,   // modules that depend on this one
+    fan_out: usize,             // how many modules I depend on
+    fan_in: usize,              // how many modules depend on me
+    instability: f64,           // fan_out / (fan_in + fan_out)
     implicit_deps: Vec<String>, // detected module references without explicit use statements
 }
 
@@ -48,7 +53,7 @@ struct CouplingSummary {
     modules_with_implicit: Vec<String>,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let src_dir = Path::new(&cli.path);
@@ -69,24 +74,39 @@ fn main() {
     let modules = build_module_info(&dependencies, &empty_implicit);
 
     let filtered: Vec<_> = if cli.min_coupling > 0 {
-        modules.into_iter().filter(|m| (m.fan_in + m.fan_out) >= cli.min_coupling).collect()
+        modules
+            .into_iter()
+            .filter(|m| (m.fan_in + m.fan_out) >= cli.min_coupling)
+            .collect()
     } else {
         modules
     };
 
     match cli.format.as_str() {
         "json" => output_json(&filtered),
-        "dot" => output_dot(&filtered),
-        _ => output_table(&filtered),
+        "dot" => {
+            output_dot(&filtered);
+            Ok(())
+        }
+        _ => {
+            output_table(&filtered);
+            Ok(())
+        }
     }
 }
 
 /// Scan all source files via tree-sitter and build dependency graph (parallel).
 fn scan_all_imports(dir: &Path) -> HashMap<String, HashSet<String>> {
-    const EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
+    const EXTS: &[&str] = &[
+        "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc",
+        "cxx", "hpp", "cs", "java", "php",
+    ];
     let files = find_source_files(dir.to_str().unwrap_or(""), true, EXTS);
     // Single-threaded rayon to reduce memory pressure (prevents OOM on 16GB/32GB systems)
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
     pool.install(|| {
         files
             .par_iter()
@@ -124,7 +144,6 @@ fn is_workspace_import(module: &str, is_rust: bool) -> bool {
         || !module.contains("::")
 }
 
-
 fn build_module_info(
     dependencies: &HashMap<String, HashSet<String>>,
     implicit_refs: &HashMap<String, HashSet<String>>,
@@ -133,7 +152,10 @@ fn build_module_info(
     let mut reverse: HashMap<String, HashSet<String>> = HashMap::new();
     for (module, deps) in dependencies {
         for dep in deps {
-            reverse.entry(dep.clone()).or_default().insert(module.clone());
+            reverse
+                .entry(dep.clone())
+                .or_default()
+                .insert(module.clone());
         }
     }
 
@@ -179,7 +201,7 @@ fn build_module_info(
         })
         .collect();
 
-    modules.sort_by(|a, b| (b.fan_in + b.fan_out).cmp(&(a.fan_in + a.fan_out)));
+    modules.sort_by_key(|b| std::cmp::Reverse(b.fan_in + b.fan_out));
     modules
 }
 
@@ -192,8 +214,8 @@ fn output_table(modules: &[ModuleInfo]) {
     println!("MODULE COUPLING ANALYSIS");
     println!("{}", "─".repeat(80));
     println!(
-        "\n{:<40} {:>8} {:>8} {:>12} {}",
-        "MODULE", "FAN-IN", "FAN-OUT", "INSTABILITY", "STATUS"
+        "\n{:<40} {:>8} {:>8} {:>12} STATUS",
+        "MODULE", "FAN-IN", "FAN-OUT", "INSTABILITY"
     );
     println!("{}", "─".repeat(80));
 
@@ -223,12 +245,22 @@ fn output_table(modules: &[ModuleInfo]) {
     println!("{}", "─".repeat(80));
     println!();
     println!("  Total modules:       {}", modules.len());
-    println!("  Total dependencies:  {}", modules.iter().map(|m| m.fan_out).sum::<usize>());
-    println!("  Avg fan-in:          {:.1}", total_fan_in as f64 / modules.len() as f64);
-    println!("  Avg fan-out:         {:.1}", total_fan_out as f64 / modules.len() as f64);
+    println!(
+        "  Total dependencies:  {}",
+        modules.iter().map(|m| m.fan_out).sum::<usize>()
+    );
+    println!(
+        "  Avg fan-in:          {:.1}",
+        total_fan_in as f64 / modules.len() as f64
+    );
+    println!(
+        "  Avg fan-out:         {:.1}",
+        total_fan_out as f64 / modules.len() as f64
+    );
 
     // Most coupled
-    let coupled: Vec<_> = modules.iter()
+    let coupled: Vec<_> = modules
+        .iter()
         .filter(|m| m.fan_in + m.fan_out > 5)
         .collect();
 
@@ -236,12 +268,16 @@ fn output_table(modules: &[ModuleInfo]) {
         println!();
         println!("  MOST COUPLED:");
         for m in coupled.iter().take(5) {
-            println!("    {} (fan-in: {}, fan-out: {})", m.name, m.fan_in, m.fan_out);
+            println!(
+                "    {} (fan-in: {}, fan-out: {})",
+                m.name, m.fan_in, m.fan_out
+            );
         }
     }
 
     // Implicit dependencies
-    let with_implicit: Vec<_> = modules.iter()
+    let with_implicit: Vec<_> = modules
+        .iter()
         .filter(|m| !m.implicit_deps.is_empty())
         .collect();
 
@@ -249,30 +285,37 @@ fn output_table(modules: &[ModuleInfo]) {
         println!();
         println!("  IMPLICIT DEPENDENCIES (no explicit use statement):");
         for m in with_implicit.iter().take(5) {
-            println!("    {} has {} implicit reference(s): {}",
+            println!(
+                "    {} has {} implicit reference(s): {}",
                 m.name,
                 m.implicit_deps.len(),
-                m.implicit_deps.join(", "));
+                m.implicit_deps.join(", ")
+            );
         }
         let total_implicit: usize = with_implicit.iter().map(|m| m.implicit_deps.len()).sum();
         println!();
-        println!("    {} modules have {} total implicit dependencies.",
-            with_implicit.len(), total_implicit);
+        println!(
+            "    {} modules have {} total implicit dependencies.",
+            with_implicit.len(),
+            total_implicit
+        );
         println!("    Consider adding explicit use statements for clarity.");
     }
 }
 
-fn output_json(modules: &[ModuleInfo]) {
+fn output_json(modules: &[ModuleInfo]) -> Result<(), Box<dyn std::error::Error>> {
     let total_fan_in: usize = modules.iter().map(|m| m.fan_in).sum();
     let total_fan_out: usize = modules.iter().map(|m| m.fan_out).sum();
     let n = modules.len();
 
-    let most_coupled: Vec<String> = modules.iter()
+    let most_coupled: Vec<String> = modules
+        .iter()
         .filter(|m| m.fan_in + m.fan_out > 5)
         .map(|m| m.name.clone())
         .collect();
 
-    let modules_with_implicit: Vec<String> = modules.iter()
+    let modules_with_implicit: Vec<String> = modules
+        .iter()
         .filter(|m| !m.implicit_deps.is_empty())
         .map(|m| m.name.clone())
         .collect();
@@ -282,14 +325,23 @@ fn output_json(modules: &[ModuleInfo]) {
         summary: CouplingSummary {
             total_modules: n,
             total_dependencies: modules.iter().map(|m| m.fan_out).sum(),
-            avg_fan_in: if n > 0 { total_fan_in as f64 / n as f64 } else { 0.0 },
-            avg_fan_out: if n > 0 { total_fan_out as f64 / n as f64 } else { 0.0 },
+            avg_fan_in: if n > 0 {
+                total_fan_in as f64 / n as f64
+            } else {
+                0.0
+            },
+            avg_fan_out: if n > 0 {
+                total_fan_out as f64 / n as f64
+            } else {
+                0.0
+            },
             most_coupled,
             modules_with_implicit,
         },
     };
 
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 fn output_dot(modules: &[ModuleInfo]) {

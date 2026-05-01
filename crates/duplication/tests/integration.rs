@@ -15,9 +15,10 @@ fn test_basic_scan() {
         .arg("--recursive")
         .assert()
         .success()
-        .stdout(predicate::str::contains("CODE DUPLICATION").or(
-            predicate::str::contains("No code duplication found")
-        ));
+        .stdout(
+            predicate::str::contains("CODE DUPLICATION")
+                .or(predicate::str::contains("No code duplication found")),
+        );
 }
 
 #[test]
@@ -51,9 +52,10 @@ fn test_summary_displayed() {
         .arg("--recursive")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Duplicate groups").or(
-            predicate::str::contains("No code duplication")
-        ));
+        .stdout(
+            predicate::str::contains("Duplicate groups")
+                .or(predicate::str::contains("No code duplication")),
+        );
 }
 
 #[test]
@@ -72,8 +74,14 @@ fn test_min_lines_3_group_listing() {
     if stdout.contains("CODE DUPLICATION") {
         // Verify group listing structure
         assert!(stdout.contains("Group"), "Missing 'Group' label in listing");
-        assert!(stdout.contains("instances"), "Missing 'instances' count in group listing");
-        assert!(stdout.contains("Pattern:"), "Missing 'Pattern:' in group listing");
+        assert!(
+            stdout.contains("instances"),
+            "Missing 'instances' count in group listing"
+        );
+        assert!(
+            stdout.contains("Pattern:"),
+            "Missing 'Pattern:' in group listing"
+        );
 
         // Verify separator lines (uses Unicode ─)
         assert!(stdout.contains("\u{2500}"), "Missing separator lines");
@@ -102,9 +110,18 @@ fn test_group_instance_format() {
         let has_instance_lines = stdout.contains("  - ");
         if has_instance_lines {
             // Verify the summary section
-            assert!(stdout.contains("Duplicate groups"), "Missing 'Duplicate groups' in summary");
-            assert!(stdout.contains("Total instances"), "Missing 'Total instances' in summary");
-            assert!(stdout.contains("Files affected"), "Missing 'Files affected' in summary");
+            assert!(
+                stdout.contains("Duplicate groups"),
+                "Missing 'Duplicate groups' in summary"
+            );
+            assert!(
+                stdout.contains("Total instances"),
+                "Missing 'Total instances' in summary"
+            );
+            assert!(
+                stdout.contains("Files affected"),
+                "Missing 'Files affected' in summary"
+            );
         }
     }
 }
@@ -123,7 +140,10 @@ fn test_separator_format() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if stdout.contains("CODE DUPLICATION") {
-        assert!(stdout.contains("\u{2500}"), "Missing Unicode separator line");
+        assert!(
+            stdout.contains("\u{2500}"),
+            "Missing Unicode separator line"
+        );
     }
 }
 
@@ -131,20 +151,25 @@ fn test_separator_format() {
 fn test_summary_fields() {
     // Verify the summary section contains all expected fields
     let src = format!("{}/src", TEST_PROJECT);
-    let output = dupfind_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = dupfind_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if stdout.contains("No code duplication found") {
         return;
     }
 
-    assert!(stdout.contains("Duplicate groups"), "Missing 'Duplicate groups'");
-    assert!(stdout.contains("Total instances"), "Missing 'Total instances'");
-    assert!(stdout.contains("Files affected"), "Missing 'Files affected'");
+    assert!(
+        stdout.contains("Duplicate groups"),
+        "Missing 'Duplicate groups'"
+    );
+    assert!(
+        stdout.contains("Total instances"),
+        "Missing 'Total instances'"
+    );
+    assert!(
+        stdout.contains("Files affected"),
+        "Missing 'Files affected'"
+    );
 }
 
 #[test]

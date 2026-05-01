@@ -1,12 +1,19 @@
+#![deny(clippy::all)]
+
+use ast_parse_ts::Language;
 use clap::Parser;
+use quality_common::{
+    find_source_files, print_table_header, print_table_row, separator, truncate, Column,
+};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use ast_parse_ts::Language;
-use quality_common::{Column, find_source_files, print_table_header, print_table_row, separator, truncate};
 
 #[derive(Parser)]
-#[command(name = "propcov", about = "Property-based testing coverage — scan for proptest/quickcheck macros and calculate coverage")]
+#[command(
+    name = "propcov",
+    about = "Property-based testing coverage — scan for proptest/quickcheck macros and calculate coverage"
+)]
 struct Cli {
     /// Path to scan (file or directory)
     path: String,
@@ -64,17 +71,17 @@ struct PropCovSummary {
     coverage_percentage: f64,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    if let Err(e) = run(cli) {
-        eprintln!("{}", e);
-        std::process::exit(1);
-    }
+    run(cli)?;
+    Ok(())
 }
 
-const PROP_COV_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "java", "cs", "php"];
+const PROP_COV_EXTS: &[&str] = &[
+    "rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "java", "cs", "php",
+];
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let target_path = Path::new(&cli.path);
 
     let source_files = if target_path.is_dir() {
@@ -84,18 +91,23 @@ fn run(cli: Cli) -> Result<(), String> {
             .filter(|p| !cli.only_tests || is_test_file(p))
             .collect()
     } else if target_path.is_file() {
-        let ext = target_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext = target_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
         if PROP_COV_EXTS.contains(&ext) {
             vec![target_path.to_path_buf()]
         } else {
-            return Err(format!("Unsupported file type: {}", cli.path));
+            return Err(format!("Unsupported file type: {}", cli.path).into());
         }
     } else {
-        return Err(format!("No source files found at {}", cli.path));
+        return Err(format!("No source files found at {}", cli.path).into());
     };
 
     if source_files.is_empty() {
-        return Err("No supported source files found to analyze.".to_string());
+        return Err("No supported source files found to analyze."
+            .to_string()
+            .into());
     }
 
     let mut all_property_tests: Vec<PropertyTest> = Vec::new();
@@ -118,7 +130,8 @@ fn run(cli: Cli) -> Result<(), String> {
             function_coverage
                 .entry(name.clone())
                 .and_modify(|existing| {
-                    existing.has_property_test = existing.has_property_test || cov.has_property_test;
+                    existing.has_property_test =
+                        existing.has_property_test || cov.has_property_test;
                     existing.has_unit_test = existing.has_unit_test || cov.has_unit_test;
                     let props: Vec<String> = cov.property_tests.clone();
                     existing.property_tests.extend(props);
@@ -128,8 +141,14 @@ fn run(cli: Cli) -> Result<(), String> {
     }
 
     let total_functions = function_coverage.len();
-    let with_property_tests = function_coverage.values().filter(|f| f.has_property_test).count();
-    let with_unit_tests = function_coverage.values().filter(|f| f.has_unit_test).count();
+    let with_property_tests = function_coverage
+        .values()
+        .filter(|f| f.has_property_test)
+        .count();
+    let with_unit_tests = function_coverage
+        .values()
+        .filter(|f| f.has_unit_test)
+        .count();
 
     let coverage_percentage = if total_functions > 0 {
         with_property_tests as f64 / total_functions as f64 * 100.0
@@ -152,10 +171,11 @@ fn run(cli: Cli) -> Result<(), String> {
 
     match cli.format.as_str() {
         "json" => output_json(&report),
-        _ => output_table(&report, cli.min_coverage),
+        _ => {
+            output_table(&report, cli.min_coverage);
+            Ok(())
+        }
     }
-
-    Ok(())
 }
 
 fn analyze_file(
@@ -194,7 +214,10 @@ fn analyze_file_rust(
             property_tests.extend(props);
         }
 
-        if trimmed.contains("quickcheck!") || trimmed.contains("#[quickcheck]") || trimmed.contains("# [ quickcheck ]") {
+        if trimmed.contains("quickcheck!")
+            || trimmed.contains("#[quickcheck]")
+            || trimmed.contains("# [ quickcheck ]")
+        {
             let props = extract_quickcheck_names(line, line_num, file);
             property_tests.extend(props);
         }
@@ -324,15 +347,29 @@ fn analyze_file_js(
         line_num += 1;
         let trimmed = line.trim();
 
-        if trimmed.starts_with("it(") || trimmed.starts_with("test(") || trimmed.starts_with("describe(") {
+        if trimmed.starts_with("it(")
+            || trimmed.starts_with("test(")
+            || trimmed.starts_with("describe(")
+        {
             unit_tests += 1;
         }
 
-        if trimmed.contains("fc.assert") || trimmed.contains("fastCheck") || trimmed.contains("property(") {
+        if trimmed.contains("fc.assert")
+            || trimmed.contains("fastCheck")
+            || trimmed.contains("property(")
+        {
             let fn_name = if trimmed.contains("function ") {
-                trimmed.split("function ").nth(1).and_then(|s| s.split(|c: char| c == '(' || c.is_whitespace()).next()).map(|s| s.to_string())
+                trimmed
+                    .split("function ")
+                    .nth(1)
+                    .and_then(|s| s.split(|c: char| c == '(' || c.is_whitespace()).next())
+                    .map(|s| s.to_string())
             } else if trimmed.contains("const ") && trimmed.contains("=") {
-                trimmed.split("const ").nth(1).and_then(|s| s.split(|c: char| c == '=' || c.is_whitespace()).next()).map(|s| s.to_string())
+                trimmed
+                    .split("const ")
+                    .nth(1)
+                    .and_then(|s| s.split(|c: char| c == '=' || c.is_whitespace()).next())
+                    .map(|s| s.to_string())
             } else {
                 None
             };
@@ -347,21 +384,34 @@ fn analyze_file_js(
             }
         }
 
-        if trimmed.starts_with("function ") || (trimmed.contains("const ") && trimmed.contains("=>")) {
+        if trimmed.starts_with("function ")
+            || (trimmed.contains("const ") && trimmed.contains("=>"))
+        {
             let fn_name = if trimmed.starts_with("function ") {
-                trimmed.split("function ").nth(1).and_then(|s| s.split(|c: char| c == '(' || c.is_whitespace()).next()).map(|s| s.to_string())
+                trimmed
+                    .split("function ")
+                    .nth(1)
+                    .and_then(|s| s.split(|c: char| c == '(' || c.is_whitespace()).next())
+                    .map(|s| s.to_string())
             } else {
-                trimmed.split("const ").nth(1).and_then(|s| s.split(|c: char| c == '=' || c.is_whitespace()).next()).map(|s| s.to_string())
+                trimmed
+                    .split("const ")
+                    .nth(1)
+                    .and_then(|s| s.split(|c: char| c == '=' || c.is_whitespace()).next())
+                    .map(|s| s.to_string())
             };
             if let Some(name) = fn_name {
-                functions.insert(name.clone(), FunctionCoverage {
-                    name,
-                    file: file.to_string(),
-                    line: line_num,
-                    has_property_test: false,
-                    has_unit_test: false,
-                    property_tests: Vec::new(),
-                });
+                functions.insert(
+                    name.clone(),
+                    FunctionCoverage {
+                        name,
+                        file: file.to_string(),
+                        line: line_num,
+                        has_property_test: false,
+                        has_unit_test: false,
+                        property_tests: Vec::new(),
+                    },
+                );
             }
         }
     }
@@ -376,10 +426,8 @@ fn analyze_file_go(
     let property_tests = Vec::new();
     let mut unit_tests = 0usize;
     let mut functions = HashMap::new();
-    let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         if trimmed.starts_with("func Test") {
@@ -459,39 +507,52 @@ fn extract_fn_name(line: &str) -> Option<String> {
 
 fn is_keyword(word: &str) -> bool {
     let keywords: HashSet<&str> = [
-        "if", "else", "while", "for", "loop", "match", "fn", "let", "mut",
-        "pub", "use", "mod", "struct", "enum", "impl", "trait", "const",
-        "static", "type", "where", "return", "break", "continue", "move",
-        "ref", "self", "Self", "super", "crate", "async", "await", "dyn",
-        "as", "in", "true", "false", "none", "some", "ok", "err", "result",
-        "option", "vec", "string", "str", "u8", "u16", "u32", "u64", "i32",
-        "i64", "f32", "f64", "bool", "char", "box", "rc", "arc", "cell",
-        "refcell", "mutex", "rwlock", "thread", "spawn", "join", "main",
-    ].iter().cloned().collect();
+        "if", "else", "while", "for", "loop", "match", "fn", "let", "mut", "pub", "use", "mod",
+        "struct", "enum", "impl", "trait", "const", "static", "type", "where", "return", "break",
+        "continue", "move", "ref", "self", "Self", "super", "crate", "async", "await", "dyn", "as",
+        "in", "true", "false", "none", "some", "ok", "err", "result", "option", "vec", "string",
+        "str", "u8", "u16", "u32", "u64", "i32", "i64", "f32", "f64", "bool", "char", "box", "rc",
+        "arc", "cell", "refcell", "mutex", "rwlock", "thread", "spawn", "join", "main",
+    ]
+    .iter()
+    .cloned()
+    .collect();
     keywords.contains(word.to_lowercase().as_str())
 }
 
 fn extract_python_fn_name(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let after_def = trimmed.strip_prefix("def ")?;
-    let name = after_def.split(|c: char| c == '(' || c.is_whitespace()).next()?;
-    if name.is_empty() { None } else { Some(name.to_string()) }
+    let name = after_def
+        .split(|c: char| c == '(' || c.is_whitespace())
+        .next()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
 
 fn extract_go_fn_name(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let after_func = trimmed.strip_prefix("func ")?;
-    let name = after_func.split(|c: char| c == '(' || c.is_whitespace()).next()?;
-    if name.is_empty() { None } else { Some(name.to_string()) }
+    let name = after_func
+        .split(|c: char| c == '(' || c.is_whitespace())
+        .next()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
 
 fn is_test_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    path_str.contains("/tests/") ||
-    path_str.contains("\\tests\\") ||
-    path_str.ends_with(&format!("_test.{}", ext)) ||
-    path_str.ends_with(&format!("_tests.{}", ext))
+    path_str.contains("/tests/")
+        || path_str.contains("\\tests\\")
+        || path_str.ends_with(&format!("_test.{}", ext))
+        || path_str.ends_with(&format!("_tests.{}", ext))
 }
 
 fn output_table(report: &PropCovReport, min_coverage: u32) {
@@ -511,12 +572,15 @@ fn output_table(report: &PropCovReport, min_coverage: u32) {
         print_table_header(&columns);
         for pt in report.property_tests.iter().take(20) {
             let line_str = pt.line.to_string();
-            print_table_row(&columns, &[
-                &truncate(&pt.name, 28),
-                &pt.framework,
-                &truncate(&pt.file, 28),
-                &line_str,
-            ]);
+            print_table_row(
+                &columns,
+                &[
+                    &truncate(&pt.name, 28),
+                    &pt.framework,
+                    &truncate(&pt.file, 28),
+                    &line_str,
+                ],
+            );
         }
         if report.property_tests.len() > 20 {
             println!("  ... and {} more", report.property_tests.len() - 20);
@@ -541,11 +605,10 @@ fn output_table(report: &PropCovReport, min_coverage: u32) {
         print_table_header(&columns);
         for f in uncovered.iter().take(15) {
             let line_str = f.line.to_string();
-            print_table_row(&columns, &[
-                &truncate(&f.name, 33),
-                &truncate(&f.file, 33),
-                &line_str,
-            ]);
+            print_table_row(
+                &columns,
+                &[&truncate(&f.name, 33), &truncate(&f.file, 33), &line_str],
+            );
         }
         if uncovered.len() > 15 {
             println!("  ... and {} more", uncovered.len() - 15);
@@ -555,13 +618,31 @@ fn output_table(report: &PropCovReport, min_coverage: u32) {
     println!("{}", separator(95));
     println!();
     println!("  SUMMARY");
-    println!("    Total functions:          {}", report.summary.total_functions);
-    println!("    With property tests:        {}", report.summary.with_property_tests);
-    println!("    With unit tests only:       {}", report.summary.with_unit_tests - report.summary.with_property_tests);
-    println!("    Property test count:        {}", report.summary.property_test_count);
-    println!("    Unit test count:            {}", report.summary.unit_test_count);
+    println!(
+        "    Total functions:          {}",
+        report.summary.total_functions
+    );
+    println!(
+        "    With property tests:        {}",
+        report.summary.with_property_tests
+    );
+    println!(
+        "    With unit tests only:       {}",
+        report.summary.with_unit_tests - report.summary.with_property_tests
+    );
+    println!(
+        "    Property test count:        {}",
+        report.summary.property_test_count
+    );
+    println!(
+        "    Unit test count:            {}",
+        report.summary.unit_test_count
+    );
     println!();
-    println!("    Property coverage:          {:.1}%", report.summary.coverage_percentage);
+    println!(
+        "    Property coverage:          {:.1}%",
+        report.summary.coverage_percentage
+    );
 
     let status = if report.summary.coverage_percentage >= 50.0 {
         "Good property coverage"
@@ -578,8 +659,9 @@ fn output_table(report: &PropCovReport, min_coverage: u32) {
     }
 }
 
-fn output_json(report: &PropCovReport) {
-    println!("{}", serde_json::to_string_pretty(report).unwrap());
+fn output_json(report: &PropCovReport) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{}", serde_json::to_string_pretty(report)?);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -618,7 +700,10 @@ mod tests {
 }
 "#;
         let (props, units, _funcs) = analyze_file(source, "test.rs", Language::Rust);
-        assert!(props.is_empty(), "Should not detect property tests in simple unit test file");
+        assert!(
+            props.is_empty(),
+            "Should not detect property tests in simple unit test file"
+        );
         assert_eq!(units, 1, "Should count unit test");
     }
 

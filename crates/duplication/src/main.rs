@@ -1,3 +1,5 @@
+#![deny(clippy::all)]
+
 use clap::Parser;
 use rayon::prelude::*;
 use serde::Serialize;
@@ -6,7 +8,10 @@ use ast_parse_ts::{fingerprint_similarity, parse_fingerprints_file};
 use quality_common::{find_source_files, truncate};
 
 #[derive(Parser)]
-#[command(name = "dupfind", about = "Code duplication detection -- find copy-pasted blocks via structural similarity")]
+#[command(
+    name = "dupfind",
+    about = "Code duplication detection -- find copy-pasted blocks via structural similarity"
+)]
 struct Cli {
     /// Path to scan (file or directory)
     path: String,
@@ -63,9 +68,12 @@ struct FunctionSkeleton {
     stmt_count: usize,
 }
 
-const SUPPORTED_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
+const SUPPORTED_EXTS: &[&str] = &[
+    "rs", "py", "pyi", "js", "mjs", "ts", "tsx", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs",
+    "java", "php",
+];
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let all_files = find_source_files(&cli.path, cli.recursive, SUPPORTED_EXTS);
@@ -75,7 +83,10 @@ fn main() {
     }
 
     // Single-threaded rayon to reduce memory pressure (prevents OOM on 16GB/32GB systems)
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
     let skeletons: Vec<FunctionSkeleton> = pool.install(|| {
         all_files
             .par_iter()
@@ -102,7 +113,10 @@ fn main() {
 
     match cli.format.as_str() {
         "json" => output_json(&groups),
-        _ => output_table(&groups),
+        _ => {
+            output_table(&groups);
+            Ok(())
+        }
     }
 }
 
@@ -171,8 +185,6 @@ fn pattern_similarity(a: &str, b: &str) -> f64 {
     fingerprint_similarity(a, b)
 }
 
-
-
 fn output_table(groups: &[DuplicateGroup]) {
     if groups.is_empty() {
         println!("No code duplication found. Clean code!");
@@ -210,7 +222,7 @@ fn output_table(groups: &[DuplicateGroup]) {
     }
 }
 
-fn output_json(groups: &[DuplicateGroup]) {
+fn output_json(groups: &[DuplicateGroup]) -> Result<(), Box<dyn std::error::Error>> {
     let total_instances: usize = groups.iter().map(|g| g.instances.len()).sum();
     let files: std::collections::HashSet<&str> = groups
         .iter()
@@ -226,7 +238,8 @@ fn output_json(groups: &[DuplicateGroup]) {
         },
     };
 
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -277,9 +290,13 @@ def bar(x, y):
         return 0
     return x * y
 "#;
-        let fps = ast_parse_ts::parse_fingerprints(source, "test.py", ast_parse_ts::Language::Python);
+        let fps =
+            ast_parse_ts::parse_fingerprints(source, "test.py", ast_parse_ts::Language::Python);
         assert_eq!(fps.len(), 2, "Should find 2 Python functions");
-        assert_eq!(fps[0].fingerprint, fps[1].fingerprint, "Identical functions should match");
+        assert_eq!(
+            fps[0].fingerprint, fps[1].fingerprint,
+            "Identical functions should match"
+        );
     }
 
     #[test]
@@ -305,8 +322,13 @@ function bar(x, y) {
     return x * y;
 }
 "#;
-        let fps = ast_parse_ts::parse_fingerprints(source, "test.js", ast_parse_ts::Language::JavaScript);
-        assert!(fps.len() >= 2, "Should find at least 2 JS functions, got {}", fps.len());
+        let fps =
+            ast_parse_ts::parse_fingerprints(source, "test.js", ast_parse_ts::Language::JavaScript);
+        assert!(
+            fps.len() >= 2,
+            "Should find at least 2 JS functions, got {}",
+            fps.len()
+        );
         // Find two identical fingerprints among all detected functions
         let first_fp = &fps[0].fingerprint;
         let matches = fps.iter().filter(|f| f.fingerprint == *first_fp).count();
@@ -346,7 +368,9 @@ func Bar(x int, y int) int {
 "#;
         let fps = ast_parse_ts::parse_fingerprints(source, "test.go", ast_parse_ts::Language::Go);
         assert_eq!(fps.len(), 2, "Should find 2 Go functions");
-        assert_eq!(fps[0].fingerprint, fps[1].fingerprint, "Identical functions should match");
+        assert_eq!(
+            fps[0].fingerprint, fps[1].fingerprint,
+            "Identical functions should match"
+        );
     }
 }
-

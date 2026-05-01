@@ -1,13 +1,18 @@
+#![deny(clippy::all)]
+
 use clap::Parser;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
 use ast_parse_ts::{parse_complexity_file, Language};
-use quality_common::{get_git_churn, Column, print_table_header, print_table_row, separator};
+use quality_common::{get_git_churn, print_table_header, print_table_row, separator, Column};
 
 #[derive(Parser)]
-#[command(name = "riskmap", about = "Risk map -- cross-reference git churn with code complexity to find danger zones")]
+#[command(
+    name = "riskmap",
+    about = "Risk map -- cross-reference git churn with code complexity to find danger zones"
+)]
 struct Cli {
     /// Path to the repository root
     path: String,
@@ -60,24 +65,24 @@ struct RiskSummary {
     danger_zone: Vec<String>, // files with both high churn AND high complexity
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    if let Err(e) = run(cli) {
-        eprintln!("{}", e);
-        std::process::exit(1);
-    }
+    run(cli)?;
+    Ok(())
 }
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let repo_root = Path::new(&cli.path);
 
     let churn_data = get_git_churn(repo_root, &cli.since);
     if churn_data.is_empty() {
-        return Err("No git churn data found. Is this a git repository?".to_string());
+        return Err("No git churn data found. Is this a git repository."
+            .to_string()
+            .into());
     }
 
     let mut file_risks = build_file_risks(repo_root, &churn_data);
-    file_risks.sort_by(|a, b| b.risk_score.cmp(&a.risk_score));
+    file_risks.sort_by_key(|b| std::cmp::Reverse(b.risk_score));
 
     if cli.min_risk > 0 {
         file_risks.retain(|f| f.risk_score >= cli.min_risk);
@@ -85,13 +90,17 @@ fn run(cli: Cli) -> Result<(), String> {
 
     match cli.format.as_str() {
         "json" => output_json(&file_risks),
-        _ => output_table(&file_risks),
+        _ => {
+            output_table(&file_risks);
+            Ok(())
+        }
     }
-
-    Ok(())
 }
 
-const SUPPORTED_EXTS: &[&str] = &["rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php"];
+const SUPPORTED_EXTS: &[&str] = &[
+    "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc", "cxx",
+    "hpp", "cs", "java", "php",
+];
 
 fn build_file_risks(repo_root: &Path, churn_data: &HashMap<String, u32>) -> Vec<FileRisk> {
     let mut file_risks = Vec::new();
@@ -112,7 +121,8 @@ fn build_file_risks(repo_root: &Path, churn_data: &HashMap<String, u32>) -> Vec<
         if lang == Language::Rust {
             let unsafe_count = count_unsafe_blocks(&full_path_str);
             let effective_complexity = risk.complexity + (unsafe_count * 2);
-            let (risk_score, category) = compute_risk_score(*churn_count, effective_complexity, unsafe_count);
+            let (risk_score, category) =
+                compute_risk_score(*churn_count, effective_complexity, unsafe_count);
             risk.risk_score = risk_score;
             risk.category = category;
             risk.unsafe_count = unsafe_count;
@@ -122,9 +132,19 @@ fn build_file_risks(repo_root: &Path, churn_data: &HashMap<String, u32>) -> Vec<
     file_risks
 }
 
-fn build_risk_from_ts(file_path: &str, churn: u32, funcs: &[ast_parse_ts::FunctionInfo], _lang: Language) -> FileRisk {
+fn build_risk_from_ts(
+    file_path: &str,
+    churn: u32,
+    funcs: &[ast_parse_ts::FunctionInfo],
+    _lang: Language,
+) -> FileRisk {
     let total_complexity: u32 = funcs.iter().map(|f| f.complexity).sum();
-    let hot = hot_functions(funcs.iter().map(|f| (f.name.clone(), f.complexity)).collect());
+    let hot = hot_functions(
+        funcs
+            .iter()
+            .map(|f| (f.name.clone(), f.complexity))
+            .collect(),
+    );
     let (risk_score, category) = compute_risk_score(churn, total_complexity, 0);
     FileRisk {
         file: file_path.to_string(),
@@ -147,8 +167,9 @@ fn count_unsafe_blocks(path: &str) -> u32 {
 }
 
 fn hot_functions(mut funcs: Vec<(String, u32)>) -> Vec<String> {
-    funcs.sort_by(|a, b| b.1.cmp(&a.1));
-    funcs.into_iter()
+    funcs.sort_by_key(|b| std::cmp::Reverse(b.1));
+    funcs
+        .into_iter()
         .take(3)
         .filter(|(_, c)| *c > 3)
         .map(|(n, c)| format!("{} (c:{})", n, c))
@@ -160,7 +181,6 @@ fn compute_risk_score(churn: u32, effective_complexity: u32, _unsafe_count: u32)
     let risk_score = (raw_risk as u32).min(100);
     (risk_score, risk_category(risk_score))
 }
-
 
 fn risk_category(risk_score: u32) -> String {
     if risk_score >= 70 {
@@ -180,7 +200,10 @@ fn output_table(file_risks: &[FileRisk]) {
         return;
     }
 
-    let high = file_risks.iter().filter(|f| f.category == "DANGER" || f.category == "HIGH").count();
+    let high = file_risks
+        .iter()
+        .filter(|f| f.category == "DANGER" || f.category == "HIGH")
+        .count();
     let medium = file_risks.iter().filter(|f| f.category == "MEDIUM").count();
     let low = file_risks.iter().filter(|f| f.category == "LOW").count();
 
@@ -224,15 +247,18 @@ fn output_table(file_risks: &[FileRisk]) {
         let risk_str = f.risk_score.to_string();
         let unsafe_str = f.unsafe_count.to_string();
         let status_str = format!("{} {}", icon, f.category);
-        print_table_row(&columns, &[
-            &f.file,
-            &churn_str,
-            &comp_str,
-            &risk_str,
-            &status_str,
-            &unsafe_str,
-            &hot,
-        ]);
+        print_table_row(
+            &columns,
+            &[
+                &f.file,
+                &churn_str,
+                &comp_str,
+                &risk_str,
+                &status_str,
+                &unsafe_str,
+                &hot,
+            ],
+        );
     }
 
     println!("{}", separator(95));
@@ -247,8 +273,11 @@ fn output_table(file_risks: &[FileRisk]) {
     if total_unsafe > 0 {
         let max_unsafe = file_risks.iter().map(|f| f.unsafe_count).max().unwrap_or(0);
         println!();
-        println!("  UNSAFE WEIGHTING:  {} total unsafe blocks across {} files", total_unsafe,
-            file_risks.iter().filter(|f| f.unsafe_count > 0).count());
+        println!(
+            "  UNSAFE WEIGHTING:  {} total unsafe blocks across {} files",
+            total_unsafe,
+            file_risks.iter().filter(|f| f.unsafe_count > 0).count()
+        );
         println!("    (Each unsafe block adds +2 to effective complexity in risk scoring)");
         if max_unsafe > 0 {
             println!("    Most unsafe:       {} blocks in top file", max_unsafe);
@@ -259,7 +288,10 @@ fn output_table(file_risks: &[FileRisk]) {
         println!();
         println!("  DANGER ZONE (high churn + high complexity):");
         for f in danger_zone.iter().take(5) {
-            println!("    {} (churn: {}, complexity: {})", f.file, f.churn, f.complexity);
+            println!(
+                "    {} (churn: {}, complexity: {})",
+                f.file, f.churn, f.complexity
+            );
             for hf in &f.hot_functions {
                 println!("      |- {}", hf);
             }
@@ -273,8 +305,11 @@ fn output_table(file_risks: &[FileRisk]) {
     }
 }
 
-fn output_json(file_risks: &[FileRisk]) {
-    let high = file_risks.iter().filter(|f| f.category == "DANGER" || f.category == "HIGH").count();
+fn output_json(file_risks: &[FileRisk]) -> Result<(), Box<dyn std::error::Error>> {
+    let high = file_risks
+        .iter()
+        .filter(|f| f.category == "DANGER" || f.category == "HIGH")
+        .count();
     let medium = file_risks.iter().filter(|f| f.category == "MEDIUM").count();
     let low = file_risks.iter().filter(|f| f.category == "LOW").count();
 
@@ -297,6 +332,6 @@ fn output_json(file_risks: &[FileRisk]) {
         },
     };
 
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
-

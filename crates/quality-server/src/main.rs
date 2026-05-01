@@ -1,10 +1,12 @@
+#![deny(clippy::all)]
+
 use clap::Parser;
+use quality_common::{wrap_tool_response, ToolRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::process::{Command, Stdio};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use quality_common::{ToolRequest, wrap_tool_response};
 
 #[derive(Parser)]
 #[command(name = "quality-server", about = "JSON-RPC daemon for quality tools")]
@@ -216,18 +218,16 @@ async fn handle_request(req: JsonRpcRequest) -> JsonRpcResponse {
                 },
             }
         }
-        "tools/run_stream" => {
-            JsonRpcResponse {
-                jsonrpc: "2.0",
-                id: req.id,
-                result: None,
-                error: Some(JsonRpcError {
-                    code: -32000,
-                    message: "tools/run_stream requires stdio transport mode".to_string(),
-                    data: None,
-                }),
-            }
-        }
+        "tools/run_stream" => JsonRpcResponse {
+            jsonrpc: "2.0",
+            id: req.id,
+            result: None,
+            error: Some(JsonRpcError {
+                code: -32000,
+                message: "tools/run_stream requires stdio transport mode".to_string(),
+                data: None,
+            }),
+        },
         "shutdown" => JsonRpcResponse {
             jsonrpc: "2.0",
             id: req.id,
@@ -252,10 +252,14 @@ async fn run_tool(params: Option<Value>) -> Result<Value, String> {
     let tool_req: ToolRequest = serde_json::from_value(params).map_err(|e| e.to_string())?;
 
     let catalog = tool_catalog();
-    let entry = catalog.iter().find(|e| e.name == tool_req.tool || e.binary == tool_req.tool)
+    let entry = catalog
+        .iter()
+        .find(|e| e.name == tool_req.tool || e.binary == tool_req.tool)
         .ok_or_else(|| format!("Unknown tool: {}", tool_req.tool))?;
 
-    let path = tool_req.args.get("path")
+    let path = tool_req
+        .args
+        .get("path")
         .and_then(|v| v.as_str())
         .unwrap_or(".");
 
@@ -263,7 +267,9 @@ async fn run_tool(params: Option<Value>) -> Result<Value, String> {
 
     if let Value::Object(map) = &tool_req.args {
         for (key, value) in map {
-            if key == "path" { continue; }
+            if key == "path" {
+                continue;
+            }
             if let Some(v) = value.as_str() {
                 args.push(format!("--{}", key));
                 args.push(v.to_string());
@@ -374,7 +380,9 @@ async fn run_stdio() {
 }
 
 async fn run_tcp(port: u16) {
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
     println!("quality-server listening on 127.0.0.1:{}", port);
 
     loop {

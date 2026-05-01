@@ -16,9 +16,10 @@ fn test_verify_original_tests() {
         .arg("0")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Original tests pass").or(
-            predicate::str::contains("No mutants to test")
-        ));
+        .stdout(
+            predicate::str::contains("Original tests pass")
+                .or(predicate::str::contains("No mutants to test")),
+        );
 }
 
 #[test]

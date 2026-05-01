@@ -15,9 +15,10 @@ fn test_basic_scan() {
         .arg("--recursive")
         .assert()
         .success()
-        .stdout(predicate::str::contains("TECHNICAL DEBT SUMMARY").or(
-            predicate::str::contains("No technical debt markers found")
-        ));
+        .stdout(
+            predicate::str::contains("TECHNICAL DEBT SUMMARY")
+                .or(predicate::str::contains("No technical debt markers found")),
+        );
 }
 
 #[test]
@@ -70,7 +71,11 @@ fn test_self_no_false_positives() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Should have very few or zero markers (no false positives from string literals)
     let marker_count = stdout.matches("\"marker_type\"").count();
-    assert!(marker_count <= 2, "Too many markers found: {} (possible false positives)", marker_count);
+    assert!(
+        marker_count <= 2,
+        "Too many markers found: {} (possible false positives)",
+        marker_count
+    );
 }
 
 #[test]
@@ -81,9 +86,7 @@ fn test_output_table_format() {
         .arg("--recursive")
         .assert()
         .success()
-        .stdout(predicate::str::contains("TYPE").or(
-            predicate::str::contains("No technical debt")
-        ));
+        .stdout(predicate::str::contains("TYPE").or(predicate::str::contains("No technical debt")));
 }
 
 #[test]
@@ -158,11 +161,7 @@ fn test_sort_by_author_output_columns() {
 fn test_summary_section_contents() {
     // Verify the summary section contains expected fields
     let src = format!("{}/src", TEST_PROJECT);
-    let output = debt_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = debt_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if stdout.contains("No technical debt markers found") {
@@ -171,7 +170,10 @@ fn test_summary_section_contents() {
     }
 
     // Summary should contain total markers and category breakdowns
-    assert!(stdout.contains("Total markers"), "Missing 'Total markers' in summary");
+    assert!(
+        stdout.contains("Total markers"),
+        "Missing 'Total markers' in summary"
+    );
     assert!(stdout.contains("TODO"), "Missing 'TODO' in summary");
     assert!(stdout.contains("FIXME"), "Missing 'FIXME' in summary");
     assert!(stdout.contains("HACK"), "Missing 'HACK' in summary");
@@ -201,11 +203,7 @@ fn test_sort_by_file_ordering() {
 fn test_debt_ratio_displayed() {
     // Verify the debt ratio verdict is shown in output
     let src = format!("{}/src", TEST_PROJECT);
-    let output = debt_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = debt_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if stdout.contains("No technical debt markers found") {
@@ -224,11 +222,7 @@ fn test_debt_ratio_displayed() {
 fn test_marker_icons_displayed() {
     // Verify marker type icons appear in table output
     let src = format!("{}/src", TEST_PROJECT);
-    let output = debt_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = debt_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if stdout.contains("No technical debt markers found") {

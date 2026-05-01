@@ -1,12 +1,17 @@
+#![deny(clippy::all)]
+
+use ast_parse_ts::parse_complexity;
 use clap::Parser;
+use quality_common::{print_table_header, print_table_row, separator, truncate, Column};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use ast_parse_ts::parse_complexity;
-use quality_common::{Column, print_table_header, print_table_row, separator, truncate};
 
 #[derive(Parser)]
-#[command(name = "fuzz", about = "Fuzzing surface analyzer — identify functions ideal for fuzz testing")]
+#[command(
+    name = "fuzz",
+    about = "Fuzzing surface analyzer — identify functions ideal for fuzz testing"
+)]
 struct Cli {
     /// Path to scan (file or directory)
     path: String,
@@ -54,27 +59,25 @@ struct FuzzSummary {
     avg_score: f64,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    if let Err(e) = run(cli) {
-        eprintln!("{}", e);
-        std::process::exit(1);
-    }
+    run(cli)?;
+    Ok(())
 }
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let target_path = Path::new(&cli.path);
 
     let source_files = if target_path.is_dir() {
         find_rs_files(target_path, cli.recursive)
-    } else if target_path.is_file() && target_path.extension().map_or(false, |e| e == "rs") {
+    } else if target_path.is_file() && target_path.extension().is_some_and(|e| e == "rs") {
         vec![target_path.to_path_buf()]
     } else {
-        return Err(format!("No Rust source files found at {}", cli.path));
+        return Err("No Rust source files found at {}".to_string().into());
     };
 
     if source_files.is_empty() {
-        return Err("No .rs files found to analyze.".to_string());
+        return Err("No .rs files found to analyze.".to_string().into());
     }
 
     // Check for existing fuzz harnesses
@@ -94,17 +97,18 @@ fn run(cli: Cli) -> Result<(), String> {
 
     // Filter by min score and sort by score descending
     all_functions.retain(|f| f.score >= cli.min_score);
-    all_functions.sort_by(|a, b| b.score.cmp(&a.score));
+    all_functions.sort_by_key(|b| std::cmp::Reverse(b.score));
 
     let display_count = cli.top.min(all_functions.len());
     let display = &all_functions[..display_count];
 
     match cli.format.as_str() {
         "json" => output_json(display, &all_functions),
-        _ => output_table(display, &all_functions),
+        _ => {
+            output_table(display, &all_functions);
+            Ok(())
+        }
     }
-
-    Ok(())
 }
 
 fn find_fuzz_harnesses(base: &Path) -> HashSet<String> {
@@ -115,7 +119,7 @@ fn find_fuzz_harnesses(base: &Path) -> HashSet<String> {
         if let Ok(entries) = std::fs::read_dir(&fuzz_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() && path.extension().map_or(false, |e| e == "rs") {
+                if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         extract_harness_names(&content, &mut harnesses);
                     }
@@ -140,7 +144,11 @@ fn extract_harness_names(content: &str, harnesses: &mut HashSet<String>) {
     }
 }
 
-fn analyze_file(source: &str, file_path: &Path, harnesses: &HashSet<String>) -> Vec<FuzzableFunction> {
+fn analyze_file(
+    source: &str,
+    file_path: &Path,
+    harnesses: &HashSet<String>,
+) -> Vec<FuzzableFunction> {
     let file_str = file_path.to_string_lossy().to_string();
 
     // Simple heuristic-based analysis (string-based, no full AST parse)
@@ -164,10 +172,11 @@ fn analyze_file(source: &str, file_path: &Path, harnesses: &HashSet<String>) -> 
             if brace_depth == 0 && trimmed.contains('}') {
                 // End of function - process the signature
                 if let Some(mut f) = parse_fn_sig(&fn_sig, &file_str, fn_start_line, harnesses) {
-                    f.complexity = parse_complexity(source, &file_str, ast_parse_ts::Language::Rust)
-                        .into_iter()
-                        .find(|func| func.name == f.name)
-                        .map_or(10, |func| func.complexity);
+                    f.complexity =
+                        parse_complexity(source, &file_str, ast_parse_ts::Language::Rust)
+                            .into_iter()
+                            .find(|func| func.name == f.name)
+                            .map_or(10, |func| func.complexity);
                     functions.push(f);
                 }
                 in_fn = false;
@@ -175,8 +184,12 @@ fn analyze_file(source: &str, file_path: &Path, harnesses: &HashSet<String>) -> 
             }
         } else {
             // Check for function signature
-            if (trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") || trimmed.starts_with("pub async fn ") || trimmed.starts_with("async fn "))
-                && trimmed.contains('(') {
+            if (trimmed.starts_with("pub fn ")
+                || trimmed.starts_with("fn ")
+                || trimmed.starts_with("pub async fn ")
+                || trimmed.starts_with("async fn "))
+                && trimmed.contains('(')
+            {
                 in_fn = true;
                 fn_start_line = line_num;
                 fn_sig = trimmed.to_string();
@@ -195,7 +208,12 @@ fn analyze_file(source: &str, file_path: &Path, harnesses: &HashSet<String>) -> 
     functions
 }
 
-fn parse_fn_sig(sig: &str, file: &str, line: usize, harnesses: &HashSet<String>) -> Option<FuzzableFunction> {
+fn parse_fn_sig(
+    sig: &str,
+    file: &str,
+    line: usize,
+    harnesses: &HashSet<String>,
+) -> Option<FuzzableFunction> {
     // Extract function name
     let after_fn = if let Some(pos) = sig.find("fn ") {
         &sig[pos + 3..]
@@ -203,7 +221,8 @@ fn parse_fn_sig(sig: &str, file: &str, line: usize, harnesses: &HashSet<String>)
         return None;
     };
 
-    let name_end = after_fn.find(|c: char| c == '(' || c.is_whitespace())
+    let name_end = after_fn
+        .find(|c: char| c == '(' || c.is_whitespace())
         .unwrap_or(after_fn.len());
     let name = after_fn[..name_end].trim().to_string();
 
@@ -215,7 +234,10 @@ fn parse_fn_sig(sig: &str, file: &str, line: usize, harnesses: &HashSet<String>)
     let params: Vec<String> = if params_str.is_empty() {
         vec![]
     } else {
-        params_str.split(',').map(|s| s.trim().to_string()).collect()
+        params_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
     };
 
     // Check visibility
@@ -243,7 +265,10 @@ fn parse_fn_sig(sig: &str, file: &str, line: usize, harnesses: &HashSet<String>)
             fuzzable_params.push(param.clone());
         }
         // Path/IO types can be fuzz targets
-        else if param_lower.contains("path") || param_lower.contains("reader") || param_lower.contains("stream") {
+        else if param_lower.contains("path")
+            || param_lower.contains("reader")
+            || param_lower.contains("stream")
+        {
             score += 10;
             fuzzable_params.push(param.clone());
         }
@@ -290,10 +315,18 @@ fn estimate_complexity(sig: &str) -> u32 {
     // Simple heuristic: count control flow keywords in the signature
     // For actual complexity we'd need to parse the body
     let mut complexity = 1;
-    if sig.contains("if ") { complexity += 1; }
-    if sig.contains("match ") { complexity += 1; }
-    if sig.contains("for ") { complexity += 1; }
-    if sig.contains("while ") { complexity += 1; }
+    if sig.contains("if ") {
+        complexity += 1;
+    }
+    if sig.contains("match ") {
+        complexity += 1;
+    }
+    if sig.contains("for ") {
+        complexity += 1;
+    }
+    if sig.contains("while ") {
+        complexity += 1;
+    }
     complexity
 }
 
@@ -302,7 +335,7 @@ fn find_rs_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |e| e == "rs") {
+            if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
                 files.push(path);
             } else if recursive && path.is_dir() {
                 files.extend(find_rs_files(&path, recursive));
@@ -334,13 +367,16 @@ fn output_table(display: &[FuzzableFunction], all: &[FuzzableFunction]) {
         let score_str = f.score.to_string();
         let file_short = truncate(&f.file, 24);
 
-        print_table_row(&columns, &[
-            &name_with_icons,
-            &file_short,
-            &line_str,
-            &score_str,
-            &truncate(&params_str, 19),
-        ]);
+        print_table_row(
+            &columns,
+            &[
+                &name_with_icons,
+                &file_short,
+                &line_str,
+                &score_str,
+                &truncate(&params_str, 19),
+            ],
+        );
     }
 
     println!("{}", separator(95));
@@ -357,16 +393,25 @@ fn output_table(display: &[FuzzableFunction], all: &[FuzzableFunction]) {
     println!("  Total functions analyzed: {}", all.len());
     println!("  Fuzzable functions:     {}", fuzzable_count);
     println!("  With harnesses:           {}", with_harnesses);
-    println!("  Without harnesses:        {}", fuzzable_count - with_harnesses);
+    println!(
+        "  Without harnesses:        {}",
+        fuzzable_count - with_harnesses
+    );
     println!("  Avg fuzzability score:    {:.1}", avg_score);
 
     if fuzzable_count > with_harnesses {
         println!();
-        println!("  {} function(s) could benefit from fuzzing harnesses.", fuzzable_count - with_harnesses);
+        println!(
+            "  {} function(s) could benefit from fuzzing harnesses.",
+            fuzzable_count - with_harnesses
+        );
     }
 }
 
-fn output_json(display: &[FuzzableFunction], all: &[FuzzableFunction]) {
+fn output_json(
+    display: &[FuzzableFunction],
+    all: &[FuzzableFunction],
+) -> Result<(), Box<dyn std::error::Error>> {
     let fuzzable_count = all.len();
     let with_harnesses = all.iter().filter(|f| f.has_harness).count();
     let avg_score = if fuzzable_count > 0 {
@@ -385,7 +430,8 @@ fn output_json(display: &[FuzzableFunction], all: &[FuzzableFunction]) {
         },
     };
 
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -400,7 +446,8 @@ mod tests {
             "test.rs",
             1,
             &harnesses,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(f.name, "parse_data");
         assert!(f.is_public);
         assert_eq!(f.score, 42); // 30 for &[u8] + 10 for pub + 1 param*2
@@ -427,7 +474,8 @@ mod tests {
             "test.rs",
             1,
             &harnesses,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(f.score, 32); // 20 for String + 10 for pub + 1 param*2
         assert!(f.params.iter().any(|p| p.contains("String")));
     }
@@ -441,7 +489,8 @@ mod tests {
             "test.rs",
             1,
             &harnesses,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(f.has_harness);
         assert_eq!(f.score, 37); // 30 + 10 + 1 param*2 - 5 for having harness
     }

@@ -1,0 +1,11 @@
+# Clippy configuration for quality-tools
+
+# Deny all clippy lints by default
+# Exceptions can be added with allow() attributes in code
+avoid-breaking-exported-api = false
+
+# MSRV (Minimum Supported Rust Version) - update as needed
+msrv = "1.75"
+
+# Allow certain lints that might be too strict
+# Add specific exceptions below as needed

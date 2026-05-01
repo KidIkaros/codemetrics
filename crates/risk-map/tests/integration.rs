@@ -15,9 +15,9 @@ fn test_basic_analysis() {
         .arg("1 year ago")
         .assert()
         .success()
-        .stdout(predicate::str::contains("RISK MAP").or(
-            predicate::str::contains("No risk data found")
-        ));
+        .stdout(
+            predicate::str::contains("RISK MAP").or(predicate::str::contains("No risk data found")),
+        );
 }
 
 #[test]
@@ -30,9 +30,7 @@ fn test_json_output() {
         .arg("1 year ago")
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"files\"").or(
-            predicate::str::contains("No risk data")
-        ));
+        .stdout(predicate::str::contains("\"files\"").or(predicate::str::contains("No risk data")));
 }
 
 #[test]
@@ -55,9 +53,7 @@ fn test_output_columns() {
         .arg("1 year ago")
         .assert()
         .success()
-        .stdout(predicate::str::contains("CHURN").or(
-            predicate::str::contains("No risk data")
-        ));
+        .stdout(predicate::str::contains("CHURN").or(predicate::str::contains("No risk data")));
 }
 
 #[test]
@@ -68,7 +64,7 @@ fn test_summary_displayed() {
         .arg("1 year ago")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Files analyzed").or(
-            predicate::str::contains("No risk data")
-        ));
+        .stdout(
+            predicate::str::contains("Files analyzed").or(predicate::str::contains("No risk data")),
+        );
 }

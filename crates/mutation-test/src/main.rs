@@ -1,16 +1,24 @@
+#![deny(clippy::all)]
+
 use clap::Parser;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::Duration;
 
-use quality_common::{Column, print_table_header, print_table_row, separator, wrap_tool_response};
+use quality_common::{print_table_header, print_table_row, separator, wrap_tool_response, Column};
 
 mod delta;
 
 #[derive(Parser)]
-#[command(name = "mutate", about = "Mutation testing — evaluate test suite quality by introducing deliberate code changes")]
+#[command(
+    name = "mutate",
+    about = "Mutation testing — evaluate test suite quality by introducing deliberate code changes"
+)]
 struct Cli {
     /// Path to the crate root (directory with Cargo.toml)
     path: String,
@@ -88,12 +96,10 @@ struct MutationSummary {
     mutation_score: f64,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    if let Err(e) = run(cli) {
-        eprintln!("{}", e);
-        std::process::exit(1);
-    }
+    run(cli)?;
+    Ok(())
 }
 
 fn run(cli: Cli) -> Result<(), String> {
@@ -127,23 +133,34 @@ fn run(cli: Cli) -> Result<(), String> {
 
     // Delta mutation testing: compute affected functions from git diff
     let delta_analysis = if cli.delta {
-        println!("Computing delta mutation analysis against {}...", cli.base_ref);
-        let loaded_files: Vec<(String, String)> = source_files.iter()
+        println!(
+            "Computing delta mutation analysis against {}...",
+            cli.base_ref
+        );
+        let loaded_files: Vec<(String, String)> = source_files
+            .iter()
             .filter_map(|f| {
                 let s = std::fs::read_to_string(f).ok()?;
                 Some((f.to_string_lossy().to_string(), s))
             })
             .collect();
 
-        let analysis = delta::run_delta_analysis(crate_root, &cli.base_ref, &loaded_files, source_files.len());
+        let analysis =
+            delta::run_delta_analysis(crate_root, &cli.base_ref, &loaded_files, source_files.len());
 
         let affected_count: usize = analysis.affected_functions.values().map(|v| v.len()).sum();
         let changed_fn_count: usize = analysis.changed_functions.values().map(|v| v.len()).sum();
 
         println!("  Changed files:    {}", analysis.changed_files.len());
         println!("  Changed functions: {}", changed_fn_count);
-        println!("  Affected by calls: {}", affected_count.saturating_sub(changed_fn_count));
-        println!("  Reduction:        {:.1}% fewer mutants\n", analysis.reduction_pct);
+        println!(
+            "  Affected by calls: {}",
+            affected_count.saturating_sub(changed_fn_count)
+        );
+        println!(
+            "  Reduction:        {:.1}% fewer mutants\n",
+            analysis.reduction_pct
+        );
 
         Some(analysis)
     } else {
@@ -201,7 +218,11 @@ fn run(cli: Cli) -> Result<(), String> {
         }
 
         let file_count = file_mutants.len();
-        println!("\nTesting {} mutants from {}...", file_count, file_path.display());
+        println!(
+            "\nTesting {} mutants from {}...",
+            file_count,
+            file_path.display()
+        );
 
         for (i, mutant) in file_mutants.iter().enumerate() {
             print!(
@@ -214,18 +235,22 @@ fn run(cli: Cli) -> Result<(), String> {
             use std::io::Write;
             let _ = std::io::stdout().flush();
 
-            let result = test_mutant_isolated(mutant, crate_root, &workspace_root, &scratch, cli.timeout);
+            let result =
+                test_mutant_isolated(mutant, crate_root, &workspace_root, &scratch, cli.timeout);
             match result.status.as_str() {
-                "killed"   => println!("✓ KILLED"),
+                "killed" => println!("✓ KILLED"),
                 "survived" => println!("✗ SURVIVED"),
-                "timeout"  => println!("⏱ TIMEOUT"),
-                _          => println!("? ERROR: {}", &result.test_output[..result.test_output.len().min(80)]),
+                "timeout" => println!("⏱ TIMEOUT"),
+                _ => println!(
+                    "? ERROR: {}",
+                    &result.test_output[..result.test_output.len().min(80)]
+                ),
             }
             match result.status.as_str() {
-                "killed"   => killed += 1,
+                "killed" => killed += 1,
                 "survived" => survived += 1,
-                "timeout"  => timeouts += 1,
-                _          => errors += 1,
+                "timeout" => timeouts += 1,
+                _ => errors += 1,
             }
             all_results.push(result);
         }
@@ -248,9 +273,24 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.format.as_str() {
         "json" => {
             let duration_ms = start.elapsed().as_millis() as u64;
-            output_json_streaming(&all_results, total_mutants, killed, survived, timeouts, errors, duration_ms);
+            let _ = output_json_streaming(
+                &all_results,
+                total_mutants,
+                killed,
+                survived,
+                timeouts,
+                errors,
+                duration_ms,
+            );
         }
-        _ => output_table_streaming(&all_results, total_mutants, killed, survived, timeouts, errors),
+        _ => output_table_streaming(
+            &all_results,
+            total_mutants,
+            killed,
+            survived,
+            timeouts,
+            errors,
+        ),
     }
 
     Ok(())
@@ -264,8 +304,8 @@ fn run(cli: Cli) -> Result<(), String> {
 // ──────────────────────────────────────────────────────────────
 
 struct ScratchCrate {
-    root: PathBuf,       // workspace root in /tmp
-    crate_rel: PathBuf,  // relative path from workspace root to the mutated crate
+    root: PathBuf,      // workspace root in /tmp
+    crate_rel: PathBuf, // relative path from workspace root to the mutated crate
 }
 
 impl ScratchCrate {
@@ -284,13 +324,20 @@ impl ScratchCrate {
             .subsec_nanos();
         let scratch_root = std::env::temp_dir().join(format!("mutate-{}", id));
 
-        eprintln!("Copying workspace to scratch: {} -> {}", workspace_root.display(), scratch_root.display());
+        eprintln!(
+            "Copying workspace to scratch: {} -> {}",
+            workspace_root.display(),
+            scratch_root.display()
+        );
 
         // Copy entire workspace (excluding target/ and .git/)
         copy_dir_recursive_filtered(&workspace_root, &scratch_root)
             .map_err(|e| format!("Cannot copy workspace to scratch: {}", e))?;
 
-        Ok(Self { root: scratch_root, crate_rel })
+        Ok(Self {
+            root: scratch_root,
+            crate_rel,
+        })
     }
 
     /// The scratch path of the mutated crate (for running cargo test -p <name>).
@@ -299,7 +346,11 @@ impl ScratchCrate {
     }
 
     /// Return the scratch path for a file given its original workspace path.
-    fn scratch_path_for(&self, original_workspace_root: &Path, original_file: &Path) -> Option<PathBuf> {
+    fn scratch_path_for(
+        &self,
+        original_workspace_root: &Path,
+        original_file: &Path,
+    ) -> Option<PathBuf> {
         let rel = original_file.strip_prefix(original_workspace_root).ok()?;
         Some(self.root.join(rel))
     }
@@ -467,7 +518,12 @@ fn run_cargo_test_with_timeout(crate_root: &Path, timeout_secs: u64) -> TestOutc
     // This avoids recompiling everything from scratch for each mutant.
     let target_dir = home_target_dir();
     let child = match std::process::Command::new("cargo")
-        .args(["test", "--quiet", "--target-dir", target_dir.to_str().unwrap_or("target")])
+        .args([
+            "test",
+            "--quiet",
+            "--target-dir",
+            target_dir.to_str().unwrap_or("target"),
+        ])
         .current_dir(crate_root)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -563,12 +619,23 @@ fn verify_tests_pass(crate_root: &Path, timeout: u64) -> Result<(), String> {
 }
 
 /// Generate mutants for a single file with a limit to prevent memory blowup
-fn generate_mutants_for_file(source: &str, file_path: &str, strategy: &str, limit: usize) -> Vec<Mutant> {
+fn generate_mutants_for_file(
+    source: &str,
+    file_path: &str,
+    strategy: &str,
+    limit: usize,
+) -> Vec<Mutant> {
     generate_mutants(source, file_path, &mut 0, strategy, limit)
 }
 
 /// Generate all possible mutants for a source file
-fn generate_mutants(source: &str, file_path: &str, next_id: &mut usize, strategy: &str, limit: usize) -> Vec<Mutant> {
+fn generate_mutants(
+    source: &str,
+    file_path: &str,
+    next_id: &mut usize,
+    strategy: &str,
+    limit: usize,
+) -> Vec<Mutant> {
     let mut mutants = Vec::with_capacity(limit.min(1000));
     let include_standard = strategy == "all" || strategy == "standard";
     let include_bitwise = strategy == "all" || strategy == "bitwise";
@@ -587,9 +654,18 @@ fn generate_mutants(source: &str, file_path: &str, next_id: &mut usize, strategy
     // Strategy 1: Binary operator swaps (standard)
     if include_standard {
         let operator_swaps = [
-            ("+", "-"), ("-", "+"), ("*", "/"), ("/", "*"),
-            ("==", "!="), ("!=", "=="), (">", "<"), ("<", ">"),
-            (">=", "<="), ("<=", ">="), ("&&", "||"), ("||", "&&"),
+            ("+", "-"),
+            ("-", "+"),
+            ("*", "/"),
+            ("/", "*"),
+            ("==", "!="),
+            ("!=", "=="),
+            (">", "<"),
+            ("<", ">"),
+            (">=", "<="),
+            ("<=", ">="),
+            ("&&", "||"),
+            ("||", "&&"),
         ];
 
         for (original_op, mutated_op) in &operator_swaps {
@@ -701,9 +777,12 @@ fn generate_mutants(source: &str, file_path: &str, next_id: &mut usize, strategy
     // Strategy 3: Bitwise operator mutations
     if include_bitwise {
         let bitwise_swaps = [
-            (" ^ ", " | "), (" | ", " ^ "),
-            (" << ", " >> "), (" >> ", " << "),
-            (" & ", " | "), (" | ", " & "),
+            (" ^ ", " | "),
+            (" | ", " ^ "),
+            (" << ", " >> "),
+            (" >> ", " << "),
+            (" & ", " | "),
+            (" | ", " & "),
         ];
 
         for (original_op, mutated_op) in &bitwise_swaps {
@@ -715,7 +794,11 @@ fn generate_mutants(source: &str, file_path: &str, next_id: &mut usize, strategy
                         id: *next_id,
                         file: file_path.to_string(),
                         line: line_num + 1,
-                        description: format!("Replace '{}' with '{}' (bitwise)", original_op.trim(), mutated_op.trim()),
+                        description: format!(
+                            "Replace '{}' with '{}' (bitwise)",
+                            original_op.trim(),
+                            mutated_op.trim()
+                        ),
                         original: line.to_string(),
                         mutated: line.replace(original_op, mutated_op),
                         category: "bitwise".to_string(),
@@ -728,15 +811,51 @@ fn generate_mutants(source: &str, file_path: &str, next_id: &mut usize, strategy
     // Strategy 4: Arithmetic overflow mutations
     if include_arithmetic {
         let arithmetic_mutations = [
-            ("wrapping_add", "+", "Replace wrapping_add with + (overflow check)"),
-            ("wrapping_sub", "-", "Replace wrapping_sub with - (overflow check)"),
-            ("wrapping_mul", "*", "Replace wrapping_mul with * (overflow check)"),
-            ("saturating_add", "+", "Replace saturating_add with + (overflow check)"),
-            ("saturating_sub", "-", "Replace saturating_sub with - (overflow check)"),
-            ("saturating_mul", "*", "Replace saturating_mul with * (overflow check)"),
-            ("checked_add", "+", "Replace checked_add with + (unwrap result)"),
-            ("checked_sub", "-", "Replace checked_sub with - (unwrap result)"),
-            ("checked_mul", "*", "Replace checked_mul with * (unwrap result)"),
+            (
+                "wrapping_add",
+                "+",
+                "Replace wrapping_add with + (overflow check)",
+            ),
+            (
+                "wrapping_sub",
+                "-",
+                "Replace wrapping_sub with - (overflow check)",
+            ),
+            (
+                "wrapping_mul",
+                "*",
+                "Replace wrapping_mul with * (overflow check)",
+            ),
+            (
+                "saturating_add",
+                "+",
+                "Replace saturating_add with + (overflow check)",
+            ),
+            (
+                "saturating_sub",
+                "-",
+                "Replace saturating_sub with - (overflow check)",
+            ),
+            (
+                "saturating_mul",
+                "*",
+                "Replace saturating_mul with * (overflow check)",
+            ),
+            (
+                "checked_add",
+                "+",
+                "Replace checked_add with + (unwrap result)",
+            ),
+            (
+                "checked_sub",
+                "-",
+                "Replace checked_sub with - (unwrap result)",
+            ),
+            (
+                "checked_mul",
+                "*",
+                "Replace checked_mul with * (unwrap result)",
+            ),
         ];
 
         for (func_name, _operator, desc) in &arithmetic_mutations {
@@ -800,7 +919,7 @@ fn find_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |e| e == "rs") {
+            if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
                 files.push(path);
             } else if path.is_dir() {
                 find_rs_files(&path, files);
@@ -808,7 +927,6 @@ fn find_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
         }
     }
 }
-
 
 #[cfg(test)]
 fn output_table(results: &[MutantResult]) {
@@ -844,7 +962,11 @@ fn output_table(results: &[MutantResult]) {
     println!();
     println!("{}", separator(80));
 
-    let score = if total > 0 { killed as f64 / total as f64 * 100.0 } else { 0.0 };
+    let score = if total > 0 {
+        killed as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
     let verdict = if score >= 90.0 {
         "Excellent -- strong test suite"
     } else if score >= 70.0 {
@@ -857,8 +979,18 @@ fn output_table(results: &[MutantResult]) {
 
     let summary = vec![
         ("Total mutants:", total.to_string()),
-        ("Killed:", format!("{} ({:.0}%)", killed, killed as f64 / total as f64 * 100.0)),
-        ("Survived:", format!("{} ({:.0}%)", survived, survived as f64 / total as f64 * 100.0)),
+        (
+            "Killed:",
+            format!("{} ({:.0}%)", killed, killed as f64 / total as f64 * 100.0),
+        ),
+        (
+            "Survived:",
+            format!(
+                "{} ({:.0}%)",
+                survived,
+                survived as f64 / total as f64 * 100.0
+            ),
+        ),
         ("Mutation Score:", format!("{:.0}%", score)),
         ("Verdict:", verdict.to_string()),
     ];
@@ -873,19 +1005,26 @@ fn output_table(results: &[MutantResult]) {
 
     if survived > 0 {
         println!();
-        println!("  {} mutant(s) survived. Your tests didn't detect these code changes.", survived);
+        println!(
+            "  {} mutant(s) survived. Your tests didn't detect these code changes.",
+            survived
+        );
         println!("    Consider adding tests for the affected functions.");
     }
 }
 
 #[cfg(test)]
-fn output_json(results: &[MutantResult]) {
+fn output_json(results: &[MutantResult]) -> Result<(), Box<dyn std::error::Error>> {
     let killed = results.iter().filter(|r| r.status == "killed").count();
     let survived = results.iter().filter(|r| r.status == "survived").count();
     let timeout = results.iter().filter(|r| r.status == "timeout").count();
     let error = results.iter().filter(|r| r.status == "error").count();
     let total = results.len();
-    let score = if total > 0 { killed as f64 / total as f64 * 100.0 } else { 0.0 };
+    let score = if total > 0 {
+        killed as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
 
     let report = MutationReport {
         results: results.to_vec(),
@@ -899,7 +1038,8 @@ fn output_json(results: &[MutantResult]) {
         },
     };
 
-    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 fn output_table_streaming(
@@ -936,7 +1076,11 @@ fn output_table_streaming(
     println!();
     println!("{}", separator(80));
 
-    let score = if total > 0 { killed as f64 / total as f64 * 100.0 } else { 0.0 };
+    let score = if total > 0 {
+        killed as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
     let verdict = if score >= 90.0 {
         "Excellent -- strong test suite"
     } else if score >= 70.0 {
@@ -949,8 +1093,18 @@ fn output_table_streaming(
 
     let summary = vec![
         ("Total mutants:", total.to_string()),
-        ("Killed:", format!("{} ({:.0}%)", killed, killed as f64 / total as f64 * 100.0)),
-        ("Survived:", format!("{} ({:.0}%)", survived, survived as f64 / total as f64 * 100.0)),
+        (
+            "Killed:",
+            format!("{} ({:.0}%)", killed, killed as f64 / total as f64 * 100.0),
+        ),
+        (
+            "Survived:",
+            format!(
+                "{} ({:.0}%)",
+                survived,
+                survived as f64 / total as f64 * 100.0
+            ),
+        ),
         ("Mutation Score:", format!("{:.0}%", score)),
         ("Verdict:", verdict.to_string()),
     ];
@@ -965,7 +1119,10 @@ fn output_table_streaming(
 
     if survived > 0 {
         println!();
-        println!("  {} mutant(s) survived. Your tests didn't detect these code changes.", survived);
+        println!(
+            "  {} mutant(s) survived. Your tests didn't detect these code changes.",
+            survived
+        );
         println!("    Consider adding tests for the affected functions.");
     }
 }
@@ -978,8 +1135,12 @@ fn output_json_streaming(
     timeouts: usize,
     errors: usize,
     duration_ms: u64,
-) {
-    let score = if total > 0 { killed as f64 / total as f64 * 100.0 } else { 0.0 };
+) -> Result<(), Box<dyn std::error::Error>> {
+    let score = if total > 0 {
+        killed as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
 
     let report = MutationReport {
         results: results.to_vec(),
@@ -1009,7 +1170,8 @@ fn output_json_streaming(
         None,
     );
 
-    println!("{}", serde_json::to_string_pretty(&response).unwrap());
+    println!("{}", serde_json::to_string_pretty(&response)?);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1046,7 +1208,9 @@ fn test() {
         let mutants = generate_mutants(source, "test.rs", &mut id, "arithmetic", 1000);
 
         assert!(!mutants.is_empty(), "Should generate arithmetic mutants");
-        assert!(mutants.iter().any(|m| m.description.contains("wrapping") || m.description.contains("saturating")));
+        assert!(mutants
+            .iter()
+            .any(|m| m.description.contains("wrapping") || m.description.contains("saturating")));
         assert!(mutants.iter().all(|m| m.category == "arithmetic"));
     }
 
@@ -1080,17 +1244,15 @@ fn test() {
 
     #[test]
     fn test_mutant_has_category() {
-        let mutants = vec![
-            Mutant {
-                id: 1,
-                file: "test.rs".to_string(),
-                line: 1,
-                description: "test".to_string(),
-                original: "a + b".to_string(),
-                mutated: "a - b".to_string(),
-                category: "standard".to_string(),
-            }
-        ];
+        let mutants = vec![Mutant {
+            id: 1,
+            file: "test.rs".to_string(),
+            line: 1,
+            description: "test".to_string(),
+            original: "a + b".to_string(),
+            mutated: "a - b".to_string(),
+            category: "standard".to_string(),
+        }];
         assert_eq!(mutants[0].category, "standard");
     }
 }

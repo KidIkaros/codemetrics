@@ -1,0 +1,9 @@
+# Rust formatting configuration for quality-tools
+# 100-character line width for readability
+max_width = 100
+
+# Use default heuristics
+use_small_heuristics = "Default"
+
+# Rust edition
+edition = "2021"

@@ -1,6 +1,5 @@
 /// Memory monitoring and resource limiting utilities.
 /// Provides safe memory threshold checking and auto-terminate capabilities.
-
 use std::time::{Duration, Instant};
 
 /// Memory usage information for the current process.
@@ -98,7 +97,7 @@ impl MemoryMonitor {
         }
         self.last_check = Instant::now();
 
-        let usage = Self::get_current_usage().unwrap_or_else(|_| MemoryUsage {
+        let usage = Self::get_current_usage().unwrap_or(MemoryUsage {
             rss_bytes: 0,
             vsize_bytes: 0,
         });

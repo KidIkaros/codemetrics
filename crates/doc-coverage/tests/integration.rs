@@ -44,10 +44,7 @@ fn test_min_threshold_pass() {
 #[test]
 fn test_single_file() {
     let lib = format!("{}/src/main.rs", TEST_PROJECT);
-    doccov_cmd()
-        .arg(&lib)
-        .assert()
-        .success();
+    doccov_cmd().arg(&lib).assert().success();
 }
 
 #[test]
@@ -67,19 +64,21 @@ fn test_output_sections() {
 fn test_undocumented_items_listing_columns() {
     // Verify the undocumented items table has KIND and NAME columns
     let src = format!("{}/src", TEST_PROJECT);
-    let output = doccov_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = doccov_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // If there are undocumented items, verify the table structure
     if stdout.contains("UNDOCUMENTED PUBLIC ITEMS") {
         assert!(stdout.contains("KIND"), "Missing KIND column header");
         assert!(stdout.contains("NAME"), "Missing NAME column header");
-        assert!(stdout.contains("FILE"), "Missing FILE column header in undocumented listing");
-        assert!(stdout.contains("LINE"), "Missing LINE column header in undocumented listing");
+        assert!(
+            stdout.contains("FILE"),
+            "Missing FILE column header in undocumented listing"
+        );
+        assert!(
+            stdout.contains("LINE"),
+            "Missing LINE column header in undocumented listing"
+        );
     }
 }
 
@@ -87,11 +86,7 @@ fn test_undocumented_items_listing_columns() {
 fn test_undocumented_items_table_rows() {
     // Verify table separator appears after headers in undocumented items
     let src = format!("{}/src", TEST_PROJECT);
-    let output = doccov_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = doccov_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if stdout.contains("UNDOCUMENTED PUBLIC ITEMS") {
@@ -104,19 +99,27 @@ fn test_undocumented_items_table_rows() {
 fn test_summary_fields_present() {
     // Verify the summary section has all expected breakdown fields
     let src = format!("{}/src", TEST_PROJECT);
-    let output = doccov_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = doccov_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("DOCUMENTATION COVERAGE"), "Missing header");
-    assert!(stdout.contains("Public items"), "Missing 'Public items' in summary");
-    assert!(stdout.contains("Documented"), "Missing 'Documented' in summary");
-    assert!(stdout.contains("Undocumented"), "Missing 'Undocumented' in summary");
+    assert!(
+        stdout.contains("Public items"),
+        "Missing 'Public items' in summary"
+    );
+    assert!(
+        stdout.contains("Documented"),
+        "Missing 'Documented' in summary"
+    );
+    assert!(
+        stdout.contains("Undocumented"),
+        "Missing 'Undocumented' in summary"
+    );
     assert!(stdout.contains("By kind"), "Missing 'By kind' breakdown");
-    assert!(stdout.contains("Functions"), "Missing 'Functions' breakdown");
+    assert!(
+        stdout.contains("Functions"),
+        "Missing 'Functions' breakdown"
+    );
     assert!(stdout.contains("Structs"), "Missing 'Structs' breakdown");
     assert!(stdout.contains("Coverage"), "Missing 'Coverage' verdict");
 }
@@ -125,11 +128,7 @@ fn test_summary_fields_present() {
 fn test_by_kind_breakdown() {
     // Verify the per-kind breakdown shows percentage values
     let src = format!("{}/src", TEST_PROJECT);
-    let output = doccov_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = doccov_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("Functions:"), "Missing Functions breakdown");
@@ -142,16 +141,15 @@ fn test_by_kind_breakdown() {
 fn test_coverage_verdict() {
     // Verify the final coverage verdict line
     let src = format!("{}/src", TEST_PROJECT);
-    let output = doccov_cmd()
-        .arg(&src)
-        .arg("--recursive")
-        .output()
-        .unwrap();
+    let output = doccov_cmd().arg(&src).arg("--recursive").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let has_verdict = stdout.contains("Excellent")
         || stdout.contains("Good")
         || stdout.contains("Needs work")
         || stdout.contains("Poor");
-    assert!(has_verdict, "Missing coverage verdict (Excellent/Good/Needs work/Poor)");
+    assert!(
+        has_verdict,
+        "Missing coverage verdict (Excellent/Good/Needs work/Poor)"
+    );
 }
