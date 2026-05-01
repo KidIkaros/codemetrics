@@ -24,7 +24,7 @@ struct Cli {
     #[arg(short = 'p', long)]
     coverage_pct: Option<f64>,
 
-    /// Output format: table (default) or json
+    /// Output format: table (default), json, or ndjson
     #[arg(short, long, default_value = "table")]
     format: String,
 
@@ -53,6 +53,9 @@ struct FunctionReport {
     coverage_pct: f64,
     crap_score: f64,
     category: String,
+    severity: String,
+    help: String,
+    rule_id: String,
 }
 
 #[derive(Serialize)]
@@ -131,6 +134,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let score = crap_score(func.complexity, coverage_pct);
             let category = crap_category(score).to_string();
 
+            let (severity, rule_id, help) = match category.as_str() {
+                "excellent" | "good" => (
+                    "info".to_string(),
+                    "crap-pass".to_string(),
+                    "Function has acceptable CRAP score.".to_string(),
+                ),
+                "acceptable" => (
+                    "warning".to_string(),
+                    "crap-warning".to_string(),
+                    "Function has moderate CRAP score. Consider refactoring or adding tests."
+                        .to_string(),
+                ),
+                _ => (
+                    "error".to_string(),
+                    "crap-error".to_string(),
+                    "Function has high CRAP score. Reduce complexity or increase test coverage."
+                        .to_string(),
+                ),
+            };
+
             FunctionReport {
                 name: func.name,
                 file: func.file,
@@ -140,6 +163,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 coverage_pct,
                 crap_score: score,
                 category,
+                severity,
+                help,
+                rule_id,
             }
         })
         .filter(|r| r.crap_score >= cli.min_score)
@@ -151,6 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.format.as_str() {
         "json" => output_json(&sorted_reports),
+        "ndjson" => output_ndjson(&sorted_reports),
         _ => {
             output_table(&sorted_reports);
             Ok(())
@@ -297,5 +324,31 @@ fn output_json(reports: &[FunctionReport]) -> Result<(), Box<dyn std::error::Err
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn output_ndjson(reports: &[FunctionReport]) -> Result<(), Box<dyn std::error::Error>> {
+    for report in reports {
+        println!(
+            "{}",
+            serde_json::json!({
+                "tool": "crap",
+                "rule_id": report.rule_id,
+                "severity": report.severity,
+                "message": format!("Function {} has CRAP score {:.1}", report.name, report.crap_score),
+                "help": report.help,
+                "file": report.file,
+                "line": report.line,
+                "col": null,
+                "details": {
+                    "name": report.name,
+                    "complexity": report.complexity,
+                    "coverage_pct": report.coverage_pct,
+                    "crap_score": report.crap_score,
+                    "category": report.category,
+                }
+            })
+        );
+    }
     Ok(())
 }

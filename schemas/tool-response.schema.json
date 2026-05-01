@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quality-tools.dev/schemas/tool-response.schema.json",
+  "title": "ToolResponse",
+  "description": "Response from a quality tool execution",
+  "type": "object",
+  "properties": {
+    "tool": {
+      "type": "string",
+      "description": "Name of the tool"
+    },
+    "version": {
+      "type": "string",
+      "description": "Tool version"
+    },
+    "success": {
+      "type": "boolean",
+      "description": "Whether the tool execution succeeded"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "description": "Execution duration in milliseconds"
+    },
+    "data": {
+      "type": "object",
+      "description": "Tool-specific output data"
+    },
+    "summary": {
+      "type": "object",
+      "description": "Summary of the results"
+    },
+    "error": {
+      "type": "string",
+      "description": "Error message if execution failed"
+    },
+    "suggested_fix": {
+      "type": "string",
+      "description": "Suggested fix for the issues found"
+    },
+    "auto_fix_available": {
+      "type": "boolean",
+      "description": "Whether an auto-fix is available"
+    }
+  },
+  "required": ["tool", "version", "success", "duration_ms", "data"]
+}

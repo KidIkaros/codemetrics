@@ -117,7 +117,9 @@ fn analyze_non_rust_file(path: &str, _cli: &Cli) -> Result<(), String> {
     };
 
     // Determine language
-    let lang = if path.ends_with(".rb") {
+    let lang = if path.ends_with(".rs") {
+        "Rust"
+    } else if path.ends_with(".rb") {
         "Ruby"
     } else if path.ends_with(".swift") {
         "Swift"
@@ -127,6 +129,16 @@ fn analyze_non_rust_file(path: &str, _cli: &Cli) -> Result<(), String> {
         "JavaScript/TypeScript"
     } else if path.ends_with(".go") {
         "Go"
+    } else if path.ends_with(".c") || path.ends_with(".h") {
+        "C"
+    } else if path.ends_with(".cpp") || path.ends_with(".cc") || path.ends_with(".cxx") {
+        "C++"
+    } else if path.ends_with(".cs") {
+        "C#"
+    } else if path.ends_with(".java") {
+        "Java"
+    } else if path.ends_with(".php") {
+        "PHP"
     } else {
         "Unknown"
     };
@@ -152,13 +164,32 @@ fn analyze_non_rust_file(path: &str, _cli: &Cli) -> Result<(), String> {
         println!("  $ mutant path/to/file.rb");
     } else if lang == "Swift" {
         println!("  # Swift mutation tools require manual setup");
-        println!("  # Consider using SwiftMutator");
+        println!("  # Consider using SwiftMutator or SwiftCheck");
     } else if lang == "Python" {
         println!("  $ pip install cosmic-ray");
         println!("  $ cosmic-ray run --test-runner pytest path/to/file.py");
+    } else if lang == "C" || lang == "C++" {
+        println!("  # C/C++ mutation testing");
+        println!("  $ cargo install mull");
+        println!("  $ mull-cpp -mutators=all path/to/file.cpp");
+    } else if lang == "C#" {
+        println!("  # C# mutation testing");
+        println!("  $ dotnet tool install --global dotnet-mutator");
+        println!("  $ dotnet-mutator run path/to/File.cs");
+    } else if lang == "Java" {
+        println!("  # Java mutation testing");
+        println!("  $ mvn org.pitest:pitest-maven:calculate-coverage");
+        println!("  $ mvn org.pitest:pitest-maven:mutationCoverage path/to/file.java");
+    } else if lang == "PHP" {
+        println!("  # PHP mutation testing");
+        println!("  $ composer require --dev infection/infection");
+        println!("  $ vendor/bin/infection path/to/file.php");
     } else if lang == "JavaScript/TypeScript" {
         println!("  $ npm install -g stryker-mutator-core");
         println!("  $ npx stryker run path/to/file.js");
+    } else if lang == "Go" {
+        println!("  $ go install github.com/zimmsja/go-mutesting@latest");
+        println!("  $ go-mutesting ./path/to/file.go");
     }
 
     Ok(())
@@ -170,120 +201,105 @@ fn count_potential_mutations(source: &str, lang: &str) -> usize {
     match lang {
         "Ruby" => {
             // Count operators that could be mutated
-            if source.contains("==") {
-                count += source.matches("==").count();
-            }
-            if source.contains("!=") {
-                count += source.matches("!=").count();
-            }
-            if source.contains("&&") {
-                count += source.matches("&&").count();
-            }
-            if source.contains("||") {
-                count += source.matches("||").count();
-            }
-            if source.contains("if ") {
-                count += source.matches("if ").count();
-            }
-            if source.contains("for ") {
-                count += source.matches("for ").count();
-            }
-            if source.contains("while ") {
-                count += source.matches("while ").count();
-            }
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("&&") { count += source.matches("&&").count(); }
+            if source.contains("||") { count += source.matches("||").count(); }
+            if source.contains("if ") { count += source.matches("if ").count(); }
+            if source.contains("for ") { count += source.matches("for ").count(); }
+            if source.contains("while ") { count += source.matches("while ").count(); }
         }
         "Swift" => {
             // Count Swift operators
-            if source.contains("==") {
-                count += source.matches("==").count();
-            }
-            if source.contains("!=") {
-                count += source.matches("!=").count();
-            }
-            if source.contains("&&") {
-                count += source.matches("&&").count();
-            }
-            if source.contains("||") {
-                count += source.matches("||").count();
-            }
-            if source.contains("if ") {
-                count += source.matches("if ").count();
-            }
-            if source.contains("for ") {
-                count += source.matches("for ").count();
-            }
-            if source.contains("while ") {
-                count += source.matches("while ").count();
-            }
-            if source.contains("switch ") {
-                count += source.matches("switch ").count();
-            }
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("&&") { count += source.matches("&&").count(); }
+            if source.contains("||") { count += source.matches("||").count(); }
+            if source.contains("if ") { count += source.matches("if ").count(); }
+            if source.contains("for ") { count += source.matches("for ").count(); }
+            if source.contains("while ") { count += source.matches("while ").count(); }
+            if source.contains("switch ") { count += source.matches("switch ").count(); }
+            if source.contains("guard ") { count += source.matches("guard ").count(); }
         }
         "Python" => {
-            if source.contains("==") {
-                count += source.matches("==").count();
-            }
-            if source.contains("!=") {
-                count += source.matches("!=").count();
-            }
-            if source.contains("and ") {
-                count += source.matches("and ").count();
-            }
-            if source.contains("or ") {
-                count += source.matches("or ").count();
-            }
-            if source.contains("if ") {
-                count += source.matches("if ").count();
-            }
-            if source.contains("for ") {
-                count += source.matches("for ").count();
-            }
-            if source.contains("while ") {
-                count += source.matches("while ").count();
-            }
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("and ") { count += source.matches("and ").count(); }
+            if source.contains("or ") { count += source.matches("or ").count(); }
+            if source.contains("if ") { count += source.matches("if ").count(); }
+            if source.contains("for ") { count += source.matches("for ").count(); }
+            if source.contains("while ") { count += source.matches("while ").count(); }
         }
-        "JavaScript/TypeScript" => {
-            if source.contains("==") {
-                count += source.matches("==").count();
-            }
-            if source.contains("!=") {
-                count += source.matches("!=").count();
-            }
-            if source.contains("&&") {
-                count += source.matches("&&").count();
-            }
-            if source.contains("||") {
-                count += source.matches("||").count();
-            }
-            if source.contains("if") {
-                count += source.matches("if").count();
-            }
-            if source.contains("for") {
-                count += source.matches("for").count();
-            }
-            if source.contains("while") {
-                count += source.matches("while").count();
-            }
+        "C" | "C++" => {
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("&&") { count += source.matches("&&").count(); }
+            if source.contains("||") { count += source.matches("||").count(); }
+            if source.contains("if ") { count += source.matches("if ").count(); }
+            if source.contains("for ") { count += source.matches("for ").count(); }
+            if source.contains("while ") { count += source.matches("while ").count(); }
+            if source.contains("switch ") { count += source.matches("switch ").count(); }
+            if source.contains("case ") { count += source.matches("case ").count(); }
+        }
+        "C#" => {
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("&&") { count += source.matches("&&").count(); }
+            if source.contains("||") { count += source.matches("||").count(); }
+            if source.contains("if") { count += source.matches("if").count(); }
+            if source.contains("for") { count += source.matches("for").count(); }
+            if source.contains("while") { count += source.matches("while").count(); }
+            if source.contains("switch") { count += source.matches("switch").count(); }
+            if source.contains("try") { count += source.matches("try").count(); }
+        }
+        "Java" => {
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("&&") { count += source.matches("&&").count(); }
+            if source.contains("||") { count += source.matches("||").count(); }
+            if source.contains("if") { count += source.matches("if").count(); }
+            if source.contains("for") { count += source.matches("for").count(); }
+            if source.contains("while") { count += source.matches("while").count(); }
+            if source.contains("switch") { count += source.matches("switch").count(); }
+            if source.contains("case") { count += source.matches("case").count(); }
+            if source.contains("try") { count += source.matches("try").count(); }
+            if source.contains("catch") { count += source.matches("catch").count(); }
+        }
+        "PHP" => {
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("&&") { count += source.matches("&&").count(); }
+            if source.contains("||") { count += source.matches("||").count(); }
+            if source.contains("if ") { count += source.matches("if ").count(); }
+            if source.contains("for ") { count += source.matches("for ").count(); }
+            if source.contains("while ") { count += source.matches("while ").count(); }
+            if source.contains("switch ") { count += source.matches("switch ").count(); }
+            if source.contains("case ") { count += source.matches("case ").count(); }
+            if source.contains("foreach") { count += source.matches("foreach").count(); }
         }
         "Go" => {
-            if source.contains("==") {
-                count += source.matches("==").count();
-            }
-            if source.contains("!=") {
-                count += source.matches("!=").count();
-            }
-            if source.contains("&&") {
-                count += source.matches("&&").count();
-            }
-            if source.contains("||") {
-                count += source.matches("||").count();
-            }
-            if source.contains("if ") {
-                count += source.matches("if ").count();
-            }
-            if source.contains("for ") {
-                count += source.matches("for ").count();
-            }
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("&&") { count += source.matches("&&").count(); }
+            if source.contains("||") { count += source.matches("||").count(); }
+            if source.contains("if ") { count += source.matches("if ").count(); }
+            if source.contains("for ") { count += source.matches("for ").count(); }
+            if source.contains("switch ") { count += source.matches("switch ").count(); }
+            if source.contains("case ") { count += source.matches("case ").count(); }
+            if source.contains("select ") { count += source.matches("select ").count(); }
+        }
+        "JavaScript/TypeScript" => {
+            if source.contains("==") { count += source.matches("==").count(); }
+            if source.contains("!=") { count += source.matches("!=").count(); }
+            if source.contains("&&") { count += source.matches("&&").count(); }
+            if source.contains("||") { count += source.matches("||").count(); }
+            if source.contains("if") { count += source.matches("if").count(); }
+            if source.contains("for") { count += source.matches("for").count(); }
+            if source.contains("while") { count += source.matches("while").count(); }
+            if source.contains("switch") { count += source.matches("switch").count(); }
+            if source.contains("case") { count += source.matches("case").count(); }
+            if source.contains("try") { count += source.matches("try").count(); }
+            if source.contains("catch") { count += source.matches("catch").count(); }
         }
         _ => {}
     }

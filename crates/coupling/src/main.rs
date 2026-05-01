@@ -17,7 +17,7 @@ struct Cli {
     /// Path to scan (directory with src/)
     path: String,
 
-    /// Output format: table (default), json, or dot (Graphviz)
+    /// Output format: table (default), json, dot (Graphviz), or ndjson
     #[arg(short, long, default_value = "table")]
     format: String,
 
@@ -35,6 +35,12 @@ struct ModuleInfo {
     fan_in: usize,              // how many modules depend on me
     instability: f64,           // fan_out / (fan_in + fan_out)
     implicit_deps: Vec<String>, // detected module references without explicit use statements
+    /// Suggested fix for high coupling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_fix: Option<String>,
+    /// Whether an auto-fix is available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_fix_available: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -86,6 +92,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "json" => output_json(&filtered),
         "dot" => {
             output_dot(&filtered);
+            Ok(())
+        }
+        "ndjson" => {
+            let _ = output_ndjson(&filtered);
             Ok(())
         }
         _ => {
@@ -163,23 +173,20 @@ fn build_module_info(
     all_modules.extend(reverse.keys().cloned());
 
     let mut modules: Vec<ModuleInfo> = all_modules
-        .iter()
-        .map(|name| {
+        .into_iter()
+        .map(|module| {
             let imports: Vec<String> = dependencies
-                .get(name)
-                .map(|s| s.iter().cloned().collect())
-                .unwrap_or_default();
-
+                .get(&module)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
             let imported_by: Vec<String> = reverse
-                .get(name)
-                .map(|s| s.iter().cloned().collect())
-                .unwrap_or_default();
-
-            let implicit_deps: Vec<String> = implicit_refs
-                .get(name)
-                .map(|s| s.iter().cloned().collect())
-                .unwrap_or_default();
-
+                .get(&module)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
             let fan_out = imports.len();
             let fan_in = imported_by.len();
             let total = fan_in + fan_out;
@@ -188,15 +195,23 @@ fn build_module_info(
             } else {
                 0.0
             };
+            let implicit = implicit_refs
+                .get(&module)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
 
             ModuleInfo {
-                name: name.clone(),
+                name: module,
                 imports,
                 imported_by,
                 fan_out,
                 fan_in,
                 instability,
-                implicit_deps,
+                implicit_deps: implicit,
+                suggested_fix: None,
+                auto_fix_available: None,
             }
         })
         .collect();
@@ -341,6 +356,13 @@ fn output_json(modules: &[ModuleInfo]) -> Result<(), Box<dyn std::error::Error>>
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn output_ndjson(modules: &[ModuleInfo]) -> Result<(), Box<dyn std::error::Error>> {
+    for module in modules {
+        println!("{}", serde_json::to_string(module)?);
+    }
     Ok(())
 }
 

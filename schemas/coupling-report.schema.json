@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quality-tools.dev/schemas/coupling-report.schema.json",
+  "title": "CouplingReport",
+  "description": "Module coupling analysis report",
+  "type": "object",
+  "properties": {
+    "modules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ModuleInfo"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/CouplingSummary"
+    }
+  },
+  "$defs": {
+    "ModuleInfo": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "imports": { "type": "array", "items": { "type": "string" } },
+        "imported_by": { "type": "array", "items": { "type": "string" } },
+        "fan_out": { "type": "integer" },
+        "fan_in": { "type": "integer" },
+        "instability": { "type": "number" },
+        "implicit_deps": { "type": "array", "items": { "type": "string" } },
+        "suggested_fix": { "type": ["string", "null"] },
+        "auto_fix_available": { "type": ["boolean", "null"] }
+      },
+      "required": ["name", "imports", "imported_by", "fan_out", "fan_in", "instability"]
+    },
+    "CouplingSummary": {
+      "type": "object",
+      "properties": {
+        "total_modules": { "type": "integer" },
+        "total_dependencies": { "type": "integer" },
+        "avg_fan_in": { "type": "number" },
+        "avg_fan_out": { "type": "number" },
+        "most_coupled": { "type": "array", "items": { "type": "string" } },
+        "modules_with_implicit": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

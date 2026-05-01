@@ -8,9 +8,11 @@ pub fn helper(x: i32) -> i32 {
     x * 2
 }
 
-/// Process a list of items.
+/// Process a list of items. Returns 0 for empty slices.
 pub fn process(items: &[i32]) -> i32 {
-    // TODO: handle empty slice
+    if items.is_empty() {
+        return 0;
+    }
     let mut total = 0;
     for item in items {
         total += helper(*item);

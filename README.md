@@ -1,5 +1,16 @@
 # quality-tools
 
+[![Quality Audit](https://github.com/your-org/quality-tools/actions/workflows/quality.yml/badge.svg)](https://github.com/your-org/quality-tools/actions/workflows/quality.yml)
+[![Docs](https://img.shields.io/badge/docs-available-brightgreen)](./docs/)
+[![ONBOARDING](https://img.shields.io/badge/onboarding-available-brightgreen)](./ONBOARDING.md)
+
+## Documentation
+
+- [User Guide](./docs/user-guide.md) — How to use quality-tools to audit and improve your project
+- [Developer Guide](./docs/developer-guide.md) — Architecture, adding new tools, testing patterns
+- [Metrics Explained](./docs/metrics-explained.md) — Detailed metric definitions, what scores mean, how to fix
+- [Quality Standards](./docs/quality-standards.md) — "Exceeding Standards" targets and quality gates
+
 Code quality metrics for 10+ languages via `tree-sitter`. All analysis is language-agnostic — no compilation required.
 
 ## Crates
@@ -23,6 +34,15 @@ Code quality metrics for 10+ languages via `tree-sitter`. All analysis is langua
 ## Multi-Language Support
 
 The `ast-parse-ts` crate uses tree-sitter grammars (pure Rust, no external dependencies) to analyze source files directly — no compilation needed. Now supports 12 languages: Rust, Python, JavaScript, TypeScript, Go, C, C++, C#, Java, PHP, Ruby, Swift, and Kotlin (partial).
+
+## AI-Native Toolkit
+
+Designed for headless AI agent integration with:
+
+- **Tool Discovery**: `quality discover --format json` outputs all available tools, their formats, output fields, and rule IDs for programmatic consumption
+- **Self-Contained Findings**: All JSON/NDJSON outputs include `severity`, `help`, and `rule_id` fields so AI agents can explain and fix issues without reading docs
+- **Streaming Support**: NDJSON format enables incremental processing for AI pipelines
+- **Standardized Output**: Consistent fields across all tools for reliable parsing
 
 | Tool | Rust | Python | JS/TS | Go | C/C++ | C# | Java | PHP | Ruby | Swift |
 |------|:----:|:------:|:-----:|:--:|:-----:|:--:|:----:|:---:|:----:|:-----:|

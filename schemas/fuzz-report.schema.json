@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quality-tools.dev/schemas/fuzz-report.schema.json",
+  "title": "FuzzReport",
+  "description": "Fuzz surface analysis report",
+  "type": "object",
+  "properties": {
+    "functions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/FuzzableFunction"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/FuzzSummary"
+    }
+  },
+  "$defs": {
+    "FuzzableFunction": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "file": { "type": "string" },
+        "line": { "type": "integer" },
+        "params": { "type": "array", "items": { "type": "string" } },
+        "score": { "type": "integer" },
+        "is_public": { "type": "boolean" },
+        "complexity": { "type": "integer" },
+        "has_harness": { "type": "boolean" },
+        "confidence": { "type": ["number", "null"] }
+      },
+      "required": ["name", "file", "line", "params", "score", "is_public", "complexity"]
+    },
+    "FuzzSummary": {
+      "type": "object",
+      "properties": {
+        "total_functions": { "type": "integer" },
+        "fuzzable_functions": { "type": "integer" },
+        "functions_with_harnesses": { "type": "integer" },
+        "avg_score": { "type": "number" }
+      }
+    }
+  }
+}

@@ -74,6 +74,23 @@ jobs:
         run: chmod +x target/release/*
       - name: Add tools to PATH
         run: echo "$(pwd)/target/release" >> $GITHUB_PATH
+      - name: Check for technical debt (zero tolerance)
+        run: |
+          # Check for TODO/FIXME/HACK/XXX markers
+          # Exclude test files, debt-scan tool strings, and docs
+          echo "Checking for technical debt markers..."
+          debt_markers=$(grep -rn "TODO\|FIXME\|HACK\|XXX" --include="*.rs" --include="*.py" --include="*.js" --include="*.ts" . 2>/dev/null | grep -v "tests/" | grep -v "debt-scan/src" | grep -v "docs/" || true)
+          if [ -n "$debt_markers" ]; then
+            echo "::error::Technical debt markers found (zero tolerance policy):"
+            echo "$debt_markers"
+            echo ""
+            echo "Fix: Remove TODO/FIXME/HACK/XXX markers and track work in issues instead."
+            echo "See docs/quality-standards.md for details."
+            exit 1
+          else
+            echo "✓ No technical debt markers found."
+          fi
+
       - name: Run quality self-audit
         run: |
           # Run batch audit; exit 1 if any tool regresses vs baseline
@@ -91,6 +108,34 @@ jobs:
         with:
           sarif_file: quality-results.sarif
           category: quality-batch
+      - name: Post quality comment on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const sarif = JSON.parse(fs.readFileSync('quality-results.sarif', 'utf8'));
+            const results = sarif.runs[0].results || [];
+            const tools = {};
+            results.forEach(r => {
+              const tool = r.ruleId.split('-')[0];
+              tools[tool] = (tools[tool] || 0) + 1;
+            });
+            let body = '## ⚠️ Quality Check Failed\n\n';
+            body += 'The following quality issues were found:\n\n';
+            for (const [tool, count] of Object.entries(tools)) {
+              body += `- **${tool}**: ${count} issue(s)\n`;
+            }
+            body += '\n### How to Fix\n';
+            body += '1. Run `quality run .` locally to see detailed findings\n';
+            body += '2. See [docs/quality-standards.md](docs/quality-standards.md) for fix guidance\n';
+            body += '3. View the [Security tab](../../security) for detailed SARIF results\n';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
       - name: Update baseline and history on main
         if: github.ref == 'refs/heads/main'
         run: |

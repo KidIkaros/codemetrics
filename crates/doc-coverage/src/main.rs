@@ -19,7 +19,7 @@ struct Cli {
     #[arg(short, long)]
     recursive: bool,
 
-    /// Output format: table (default) or json
+    /// Output format: table (default), json, or ndjson
     #[arg(short, long, default_value = "table")]
     format: String,
 
@@ -36,6 +36,15 @@ struct DocItem {
     documented: bool,
     file: String,
     line: usize,
+    /// Code context (surrounding lines) for the item
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code_context: Option<String>,
+    /// Suggested fix for documentation issues
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_fix: Option<String>,
+    /// Whether an auto-fix is available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_fix_available: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -91,6 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 documented: info.documented,
                 file: file_path.clone(),
                 line: info.line,
+                code_context: None,
+                suggested_fix: None,
+                auto_fix_available: None,
             });
         }
         // If parser returned zero items but stats say there are some, fall back to generic items
@@ -103,6 +115,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     documented: false,
                     file: file_path.clone(),
                     line: 0,
+                    code_context: None,
+                    suggested_fix: None,
+                    auto_fix_available: None,
                 });
             }
             for item in all_items
@@ -117,6 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.format.as_str() {
         "json" => output_json(&all_items),
+        "ndjson" => output_ndjson(&all_items),
         _ => {
             let coverage = output_table(&all_items);
             if let Some(min) = cli.min {
@@ -285,6 +301,13 @@ fn output_json(items: &[DocItem]) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn output_ndjson(items: &[DocItem]) -> Result<(), Box<dyn std::error::Error>> {
+    for item in items {
+        println!("{}", serde_json::to_string(item)?);
+    }
     Ok(())
 }
 

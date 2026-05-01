@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quality-tools.dev/schemas/doccov-report.schema.json",
+  "title": "DocReport",
+  "description": "Documentation coverage report",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DocItem"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/DocSummary"
+    }
+  },
+  "$defs": {
+    "DocItem": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string" },
+        "name": { "type": "string" },
+        "public": { "type": "boolean" },
+        "documented": { "type": "boolean" },
+        "file": { "type": "string" },
+        "line": { "type": "integer" },
+        "code_context": { "type": ["string", "null"] },
+        "suggested_fix": { "type": ["string", "null"] },
+        "auto_fix_available": { "type": ["boolean", "null"] }
+      },
+      "required": ["kind", "name", "public", "documented", "file", "line"]
+    },
+    "DocSummary": {
+      "type": "object",
+      "properties": {
+        "total_public": { "type": "integer" },
+        "documented": { "type": "integer" },
+        "undocumented": { "type": "integer" },
+        "coverage_pct": { "type": "number" },
+        "by_kind": {
+          "$ref": "#/$defs/KindBreakdown"
+        }
+      }
+    },
+    "KindBreakdown": {
+      "type": "object",
+      "properties": {
+        "functions": { "type": "array", "items": { "type": "integer" } },
+        "structs": { "type": "array", "items": { "type": "integer" } },
+        "enums": { "type": "array", "items": { "type": "integer" } },
+        "traits": { "type": "array", "items": { "type": "integer" } },
+        "impl_fns": { "type": "array", "items": { "type": "integer" } }
+      }
+    }
+  }
+}

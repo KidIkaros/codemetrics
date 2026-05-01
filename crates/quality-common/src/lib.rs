@@ -29,6 +29,12 @@ pub struct ToolResponse {
     pub summary: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Suggested fix for the issues found (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_fix: Option<String>,
+    /// Whether an auto-fix is available for the issues found
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_fix_available: Option<bool>,
 }
 
 /// Progress event streamed during long-running tool execution.
@@ -50,6 +56,12 @@ pub struct ToolResult {
     pub data: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Suggested fix for the issues found (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_fix: Option<String>,
+    /// Whether an auto-fix is available for the issues found
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_fix_available: Option<bool>,
 }
 
 /// Combined report from running multiple tools in one batch.
@@ -89,6 +101,8 @@ pub fn wrap_tool_response(
         data,
         summary,
         error,
+        suggested_fix: None,
+        auto_fix_available: None,
     }
 }
 
@@ -582,6 +596,8 @@ pub struct SarifRule {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_description: Option<SarifMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub help: Option<SarifMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_configuration: Option<SarifRuleConfig>,
 }
 
@@ -669,6 +685,43 @@ impl SarifLog {
 }
 
 /// Convenience builder for a single-tool SARIF run.
+
+/// Get detailed information about a rule for SARIF output.
+pub fn get_rule_details(rule_id: &str) -> (String, String, String) {
+    match rule_id {
+        "crap-error" => (
+            "CRAP Score Too High".to_string(),
+            "The CRAP (Change Risk Anti-Patterns) score combines cyclomatic complexity with test coverage. A high CRAP score indicates code that is risky to maintain and modify.".to_string(),
+            "To fix: 1) Reduce complexity by splitting the function into smaller parts. 2) Increase test coverage for the function. Target: CRAP < 15, complexity < 5, coverage > 90%.".to_string(),
+        ),
+        "debt-error" => (
+            "Technical Debt Markers Found".to_string(),
+            "Technical debt markers (TODO, FIXME, HACK, XXX) indicate future work that hasn't been done. These should be tracked in issue trackers, not left in code.".to_string(),
+            "To fix: 1) Create issues for each marker in your project tracker. 2) Remove the markers from code. 3) Follow the 'zero debt' principle - no markers in committed code.".to_string(),
+        ),
+        "doc-error" => (
+            "Documentation Coverage Too Low".to_string(),
+            "Public API documentation helps users understand how to use your code. Low documentation coverage indicates missing doc comments on public functions, structs, or modules.".to_string(),
+            "To fix: 1) Add doc comments (/// or /*!) to all public items. 2) Run 'doccov' to check coverage. Target: > 95% for public APIs.".to_string(),
+        ),
+        "complexity-error" => (
+            "Cyclomatic Complexity Too High".to_string(),
+            "Cyclomatic complexity measures the number of decision points in code. High complexity indicates functions that are hard to understand, test, and maintain.".to_string(),
+            "To fix: 1) Split complex functions into smaller, focused functions. 2) Reduce nesting depth. 3) Use early returns to reduce cognitive load. Target: complexity < 5 per function.".to_string(),
+        ),
+        "duplication-error" => (
+            "Code Duplication Detected".to_string(),
+            "Duplicated code increases maintenance burden and the risk of inconsistent fixes. It should be extracted into shared functions or modules.".to_string(),
+            "To fix: 1) Extract duplicated code into a shared function. 2) Use abstraction to eliminate redundancy. Target: 0 duplicates > 3 lines.".to_string(),
+        ),
+        _ => (
+            format!("Rule {}", rule_id),
+            format!("Details for rule {}", rule_id),
+            "Review the finding and apply appropriate fixes.".to_string(),
+        ),
+    }
+}
+
 pub fn sarif_run(
     tool_name: &str,
     tool_version: &str,
@@ -681,16 +734,18 @@ pub fn sarif_run(
 
     let rules: Vec<SarifRule> = rule_ids
         .into_iter()
-        .map(|id| SarifRule {
-            id: id.clone(),
-            name: Some(id.clone()),
-            short_description: Some(SarifMessage {
-                text: format!("Rule {}", id),
-            }),
-            full_description: None,
-            default_configuration: Some(SarifRuleConfig {
-                level: "warning".to_string(),
-            }),
+        .map(|id| {
+            let (short_desc, full_desc, help_text) = get_rule_details(&id);
+            SarifRule {
+                id: id.clone(),
+                name: Some(id.clone()),
+                short_description: Some(SarifMessage { text: short_desc }),
+                full_description: Some(SarifMessage { text: full_desc }),
+                help: Some(SarifMessage { text: help_text }),
+                default_configuration: Some(SarifRuleConfig {
+                    level: "warning".to_string(),
+                }),
+            }
         })
         .collect();
 

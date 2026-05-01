@@ -24,7 +24,7 @@ struct Cli {
     #[arg(short, long, default_value = "5")]
     min_lines: usize,
 
-    /// Output format: table (default) or json
+    /// Output format: table (default), json, or ndjson
     #[arg(short, long, default_value = "table")]
     format: String,
 }
@@ -34,6 +34,12 @@ struct DuplicateGroup {
     fingerprint: String,
     instances: Vec<DuplicateInstance>,
     similarity: f64,
+    /// Suggested fix for the duplication
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_fix: Option<String>,
+    /// Whether an auto-fix is available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_fix_available: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +47,9 @@ struct DuplicateInstance {
     file: String,
     function: String,
     line: usize,
+    /// Code context (surrounding lines) for the instance
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code_context: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -113,6 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.format.as_str() {
         "json" => output_json(&groups),
+        "ndjson" => output_ndjson(&groups),
         _ => {
             output_table(&groups);
             Ok(())
@@ -149,6 +159,7 @@ fn try_build_group(
         file: skeletons[i].file.clone(),
         function: skeletons[i].name.clone(),
         line: skeletons[i].line,
+        code_context: None,
     }];
 
     for j in (i + 1)..skeletons.len() {
@@ -162,6 +173,7 @@ fn try_build_group(
                 file: skeletons[j].file.clone(),
                 function: skeletons[j].name.clone(),
                 line: skeletons[j].line,
+                code_context: None,
             });
             used[j] = true;
         }
@@ -173,6 +185,8 @@ fn try_build_group(
             fingerprint: truncate(&skeletons[i].pattern, 60),
             instances: group_instances,
             similarity: 1.0, // All in group are similar
+            suggested_fix: None,
+            auto_fix_available: None,
         })
     } else {
         None
@@ -239,6 +253,13 @@ fn output_json(groups: &[DuplicateGroup]) -> Result<(), Box<dyn std::error::Erro
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn output_ndjson(groups: &[DuplicateGroup]) -> Result<(), Box<dyn std::error::Error>> {
+    for group in groups {
+        println!("{}", serde_json::to_string(group)?);
+    }
     Ok(())
 }
 

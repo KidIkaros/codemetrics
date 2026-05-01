@@ -21,7 +21,7 @@ struct Cli {
     #[arg(short, long)]
     recursive: bool,
 
-    /// Output format: table (default) or json
+    /// Output format: table (default), json, or ndjson
     #[arg(short, long, default_value = "table")]
     format: String,
 
@@ -42,6 +42,15 @@ struct DebtItem {
     text: String,
     author: Option<String>,
     date: Option<String>,
+    /// Code context (surrounding lines) for the finding
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code_context: Option<String>,
+    /// Suggested fix for the technical debt item
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_fix: Option<String>,
+    /// Whether an auto-fix is available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_fix_available: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -96,6 +105,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.format.as_str() {
         "json" => output_json(&items),
+        "ndjson" => output_ndjson(&items),
         _ => {
             output_table(&items);
             Ok(())
@@ -159,6 +169,9 @@ fn scan_source(
             text,
             author,
             date,
+            code_context: None,
+            suggested_fix: None,
+            auto_fix_available: None,
         });
     }
 }
@@ -361,5 +374,12 @@ fn output_json(items: &[DebtItem]) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn output_ndjson(items: &[DebtItem]) -> Result<(), Box<dyn std::error::Error>> {
+    for item in items {
+        println!("{}", serde_json::to_string(item)?);
+    }
     Ok(())
 }

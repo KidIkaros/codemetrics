@@ -47,6 +47,9 @@ struct Violation {
     violation_type: String,
     severity: String,
     context: String,
+    /// Confidence level in the taint violation detection (0.0 to 1.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confidence: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -315,6 +318,7 @@ fn analyze_file_multilang(
                         violation_type: "LOG_LEAK".to_string(),
                         severity: "high".to_string(),
                         context: truncate(trimmed, 60).to_string(),
+                        confidence: None,
                     });
                 } else if is_print_sink_multilang(trimmed, lang) {
                     violations.push(Violation {
@@ -324,6 +328,7 @@ fn analyze_file_multilang(
                         violation_type: "PRINT_LEAK".to_string(),
                         severity: "high".to_string(),
                         context: truncate(trimmed, 60).to_string(),
+                        confidence: None,
                     });
                 } else if is_file_write_sink_multilang(trimmed, lang) {
                     violations.push(Violation {
@@ -333,6 +338,7 @@ fn analyze_file_multilang(
                         violation_type: "FILE_WRITE".to_string(),
                         severity: "medium".to_string(),
                         context: truncate(trimmed, 60).to_string(),
+                        confidence: None,
                     });
                 } else if is_public_return_multilang(trimmed, var, lang) {
                     violations.push(Violation {
@@ -342,6 +348,7 @@ fn analyze_file_multilang(
                         violation_type: "UNFILTERED_RETURN".to_string(),
                         severity: "medium".to_string(),
                         context: truncate(trimmed, 60).to_string(),
+                        confidence: None,
                     });
                 } else if is_debug_sink_multilang(trimmed, lang) {
                     violations.push(Violation {
@@ -351,6 +358,7 @@ fn analyze_file_multilang(
                         violation_type: "DEBUG_LEAK".to_string(),
                         severity: "low".to_string(),
                         context: truncate(trimmed, 60).to_string(),
+                        confidence: None,
                     });
                 }
             }

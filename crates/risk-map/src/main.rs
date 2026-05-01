@@ -21,7 +21,7 @@ struct Cli {
     #[arg(short, long, default_value = "6 months ago")]
     since: String,
 
-    /// Output format: table (default) or json
+    /// Output format: table (default), json, or ndjson
     #[arg(short, long, default_value = "table")]
     format: String,
 
@@ -47,6 +47,15 @@ struct FileRisk {
     unsafe_count: u32,
     /// Most complex functions
     hot_functions: Vec<String>,
+    /// Suggested fix for high-risk files
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_fix: Option<String>,
+    /// Whether an auto-fix is available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_fix_available: Option<bool>,
+    /// Code context (key problematic sections)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code_context: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -90,6 +99,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.format.as_str() {
         "json" => output_json(&file_risks),
+        "ndjson" => output_ndjson(&file_risks),
         _ => {
             output_table(&file_risks);
             Ok(())
@@ -155,6 +165,9 @@ fn build_risk_from_ts(
         category,
         unsafe_count: 0,
         hot_functions: hot,
+        suggested_fix: None,
+        auto_fix_available: None,
+        code_context: None,
     }
 }
 
@@ -333,5 +346,12 @@ fn output_json(file_risks: &[FileRisk]) -> Result<(), Box<dyn std::error::Error>
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn output_ndjson(file_risks: &[FileRisk]) -> Result<(), Box<dyn std::error::Error>> {
+    for file_risk in file_risks {
+        println!("{}", serde_json::to_string(file_risk)?);
+    }
     Ok(())
 }

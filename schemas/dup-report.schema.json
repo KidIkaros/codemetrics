@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quality-tools.dev/schemas/dup-report.schema.json",
+  "title": "DupReport",
+  "description": "Code duplication report",
+  "type": "object",
+  "properties": {
+    "groups": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DuplicateGroup"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/DupSummary"
+    }
+  },
+  "$defs": {
+    "DuplicateGroup": {
+      "type": "object",
+      "properties": {
+        "fingerprint": { "type": "string" },
+        "instances": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DuplicateInstance" }
+        },
+        "similarity": { "type": "number" },
+        "suggested_fix": { "type": ["string", "null"] },
+        "auto_fix_available": { "type": ["boolean", "null"] }
+      },
+      "required": ["fingerprint", "instances", "similarity"]
+    },
+    "DuplicateInstance": {
+      "type": "object",
+      "properties": {
+        "file": { "type": "string" },
+        "function": { "type": "string" },
+        "line": { "type": "integer" },
+        "code_context": { "type": ["string", "null"] }
+      },
+      "required": ["file", "function", "line"]
+    },
+    "DupSummary": {
+      "type": "object",
+      "properties": {
+        "total_groups": { "type": "integer" },
+        "total_instances": { "type": "integer" },
+        "files_affected": { "type": "integer" }
+      }
+    }
+  }
+}

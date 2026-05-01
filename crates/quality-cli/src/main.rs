@@ -189,6 +189,13 @@ enum Commands {
         #[arg(long, default_value = "500")]
         debounce_ms: u64,
     },
+
+    /// Discover available quality tools and their capabilities
+    Discover {
+        /// Output format: json (default) or text
+        #[arg(short, long, default_value = "json")]
+        format: String,
+    },
 }
 
 // ═══════════════════════════════════════════
@@ -211,6 +218,9 @@ struct CheckResult {
     threshold: Option<f64>,
     message: String,
     details: serde_json::Value,
+    severity: Option<String>,
+    help: Option<String>,
+    rule_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -221,6 +231,16 @@ struct CheckSummary {
     functions_analyzed: usize,
     avg_complexity: f64,
     avg_crap: f64,
+}
+
+#[derive(Serialize)]
+struct ToolInfo {
+    name: String,
+    binary: String,
+    description: String,
+    supported_formats: Vec<String>,
+    output_fields: Vec<String>,
+    rule_ids: Vec<String>,
 }
 
 // ═══════════════════════════════════════════
@@ -284,6 +304,26 @@ fn check_crap(
     };
     let crappy: Vec<_> = functions.iter().filter(|f| f.3 > 30.0).collect();
 
+    let (severity, rule_id, help) = if avg_crap <= max_crap {
+        (
+            "info".to_string(),
+            "crap-pass".to_string(),
+            "CRAP score is within acceptable limits.".to_string(),
+        )
+    } else if avg_crap > max_crap * 1.5 {
+        (
+            "error".to_string(),
+            "crap-error".to_string(),
+            "Reduce function complexity or increase test coverage to lower CRAP score. Aim for CRAP < 30 per function.".to_string(),
+        )
+    } else {
+        (
+            "warning".to_string(),
+            "crap-warning".to_string(),
+            "CRAP score is approaching threshold. Consider refactoring complex functions or adding tests.".to_string(),
+        )
+    };
+
     CheckResult {
         name: "crap".to_string(),
         passed: avg_crap <= max_crap,
@@ -310,6 +350,9 @@ fn check_crap(
                 })
             }).collect::<Vec<_>>(),
         }),
+        severity: Some(severity),
+        help: Some(help),
+        rule_id: Some(rule_id),
     }
 }
 
@@ -344,6 +387,26 @@ fn check_debt(path: &str, recursive: bool, max_debt: usize) -> CheckResult {
         }
     }
 
+    let (severity, rule_id, help) = if count <= max_debt {
+        (
+            "info".to_string(),
+            "debt-pass".to_string(),
+            "Technical debt is within acceptable limits.".to_string(),
+        )
+    } else if count > max_debt * 2 {
+        (
+            "error".to_string(),
+            "debt-high".to_string(),
+            "Excessive technical debt. Address TODO/FIXME/HACK markers to improve code maintainability.".to_string(),
+        )
+    } else {
+        (
+            "warning".to_string(),
+            "debt-moderate".to_string(),
+            "Moderate technical debt. Consider addressing high-priority markers first.".to_string(),
+        )
+    };
+
     CheckResult {
         name: "debt".to_string(),
         passed: count <= max_debt,
@@ -358,6 +421,9 @@ fn check_debt(path: &str, recursive: bool, max_debt: usize) -> CheckResult {
             "total_markers": count,
             "items": items.iter().take(20).collect::<Vec<_>>(),
         }),
+        severity: Some(severity),
+        help: Some(help),
+        rule_id: Some(rule_id),
     }
 }
 
@@ -460,6 +526,27 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
     let mut langs_vec: Vec<String> = langs_seen.into_iter().collect();
     langs_vec.sort();
 
+    let (severity, rule_id, help) = if pct >= min_doc {
+        (
+            "info".to_string(),
+            "doccov-pass".to_string(),
+            "Documentation coverage is within acceptable limits.".to_string(),
+        )
+    } else if pct < min_doc * 0.5 {
+        (
+            "error".to_string(),
+            "doccov-low".to_string(),
+            "Very low documentation coverage. Add documentation to public APIs to improve maintainability.".to_string(),
+        )
+    } else {
+        (
+            "warning".to_string(),
+            "doccov-moderate".to_string(),
+            "Moderate documentation coverage. Add documentation to remaining public APIs."
+                .to_string(),
+        )
+    };
+
     CheckResult {
         name: "doc_coverage".to_string(),
         passed: pct >= min_doc,
@@ -486,6 +573,9 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
             "coverage_pct": pct,
             "languages": langs_vec,
         }),
+        severity: Some(severity),
+        help: Some(help),
+        rule_id: Some(rule_id),
     }
 }
 
@@ -521,6 +611,27 @@ fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckRe
     let mut langs_vec: Vec<String> = langs_seen.into_iter().collect();
     langs_vec.sort();
 
+    let (severity, rule_id, help) = if complex_funcs.is_empty() {
+        (
+            "info".to_string(),
+            "complexity-pass".to_string(),
+            "No functions with excessive complexity.".to_string(),
+        )
+    } else if complex_funcs.len() > 10 {
+        (
+            "error".to_string(),
+            "complexity-high".to_string(),
+            "Multiple functions with high complexity. Refactor to reduce decision points."
+                .to_string(),
+        )
+    } else {
+        (
+            "warning".to_string(),
+            "complexity-moderate".to_string(),
+            "Some functions with high complexity. Consider refactoring.".to_string(),
+        )
+    };
+
     CheckResult {
         name: "complexity".to_string(),
         passed: complex_funcs.is_empty(),
@@ -545,6 +656,9 @@ fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckRe
             "languages": langs_vec,
             "functions": complex_funcs.iter().take(10).collect::<Vec<_>>(),
         }),
+        severity: Some(severity),
+        help: Some(help),
+        rule_id: Some(rule_id),
     }
 }
 
@@ -593,27 +707,242 @@ fn output_text(report: &CheckReport) {
 // ═══════════════════════════════════════════
 
 fn generate_config(output: &str) {
-    let config = r#"# .quality.toml -- Quality check thresholds
+    let config = r#"
+# .quality.toml -- Quality check thresholds
 # Used by: quality check ./src --config .quality.toml
+#
+# "EXCEEDING STANDARDS" TARGETS:
+# These thresholds ensure code quality that exceeds industry standards.
+# See docs/quality-standards.md for detailed explanations.
 
 [crap]
-max_avg = 30           # Fail if average CRAP exceeds this
-max_functions = 50     # Fail if more than N functions have CRAP > 30
+# CRAP (Change Risk Anti-Patterns) score combines complexity with test coverage
+# Formula: CRAP = comp^2 * (1 - coverage/100)^3 + comp
+# Target: < 15 (industry standard is < 30)
+max_avg = 15            # Fail if average CRAP exceeds this (lower = better)
+max_functions = 0       # Fail if ANY function has CRAP > 30 (zero tolerance)
 
 [debt]
-max_markers = 100      # Fail if too many debt markers found
-types = ["TODO", "FIXME", "HACK"]
+# Technical debt markers indicate future work that hasn't been done
+# Types: TODO (planned work), FIXME (bugs), HACK (temporary workarounds)
+# Target: 0 markers (all debt should be tracked in issues, not code)
+max_markers = 0         # Fail if ANY debt markers found (zero tolerance)
+types = ["TODO", "FIXME", "HACK", "XXX"]
+# Note: Use GitHub issues or project management tools instead of code markers
 
 [doc_coverage]
-min_pct = 50           # Fail if public API doc coverage below this
+# Documentation coverage for public APIs
+# Target: > 95% (exceeding standard, industry average is ~60%)
+min_pct = 95            # Fail if public API doc coverage below this
+# Note: Private functions don't need doc comments
 
 [complexity]
-max_function = 10      # Warn if any function has complexity above this
+# Cyclomatic complexity measures decision points in code
+# Target: < 5 per function (exceeding standard, industry is < 10)
+max_function = 5        # Fail if any function has complexity above this
+# Note: High complexity indicates need for refactoring
+
+[duplication]
+# Code duplication detected via AST structural similarity
+# Target: 0 duplicates > 3 lines (exceeding standard)
+max_duplicates = 0      # Fail if ANY duplicates found
+min_lines = 3           # Minimum lines to consider as duplication
+
+[coverage]
+# Test coverage percentage (if coverage data available)
+# Target: > 90% (exceeding standard, industry is 70-80%)
+min_pct = 90            # Fail if coverage drops below this
+# Note: Use --coverage flag or provide lcov file
 
 [skip]
-checks = []            # Skip these checks: crap, debt, doc, complexity
+# Skip specific checks (use sparingly, reduces quality guarantee)
+checks = []             # Skip these checks: crap, debt, doc, complexity, duplication
+# Note: Skipping checks should be temporary and documented
 "#;
     std::fs::write(output, config).expect("Failed to write config");
+}
+
+fn discover_command(format: &str) {
+    let tools = vec![
+        ToolInfo {
+            name: "crap".to_string(),
+            binary: "crap".to_string(),
+            description: "CRAP score calculator (maintenance risk)".to_string(),
+            supported_formats: vec![
+                "json".to_string(),
+                "text".to_string(),
+                "sarif".to_string(),
+                "ndjson".to_string(),
+            ],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["crap-error".to_string(), "crap-warning".to_string()],
+        },
+        ToolInfo {
+            name: "debt".to_string(),
+            binary: "debt".to_string(),
+            description: "Technical debt scanner (TODO/FIXME/HACK)".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "type".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec![
+                "debt-todo".to_string(),
+                "debt-fixme".to_string(),
+                "debt-hack".to_string(),
+                "debt-xxx".to_string(),
+                "debt-bug".to_string(),
+            ],
+        },
+        ToolInfo {
+            name: "doccov".to_string(),
+            binary: "doccov".to_string(),
+            description: "Documentation coverage for public APIs".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["doccov-missing-doc".to_string()],
+        },
+        ToolInfo {
+            name: "dupfind".to_string(),
+            binary: "dupfind".to_string(),
+            description: "Code duplication detection".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["dupfind-duplicate".to_string()],
+        },
+        ToolInfo {
+            name: "coupling".to_string(),
+            binary: "coupling".to_string(),
+            description: "Module dependency analysis".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["coupling-high".to_string()],
+        },
+        ToolInfo {
+            name: "riskmap".to_string(),
+            binary: "riskmap".to_string(),
+            description: "Risk map (churn × complexity)".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["riskmap-high-risk".to_string()],
+        },
+        ToolInfo {
+            name: "mutate".to_string(),
+            binary: "mutate".to_string(),
+            description: "Mutation testing (Rust-only)".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["mutate-unmutated".to_string()],
+        },
+        ToolInfo {
+            name: "fuzz".to_string(),
+            binary: "fuzz".to_string(),
+            description: "Fuzz surface analysis".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["fuzz-unsafe-surface".to_string()],
+        },
+        ToolInfo {
+            name: "propcov".to_string(),
+            binary: "propcov".to_string(),
+            description: "Property test coverage".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["propcov-low-coverage".to_string()],
+        },
+        ToolInfo {
+            name: "taint".to_string(),
+            binary: "taint".to_string(),
+            description: "Taint analysis (data flow)".to_string(),
+            supported_formats: vec!["json".to_string(), "text".to_string(), "ndjson".to_string()],
+            output_fields: vec![
+                "rule_id".to_string(),
+                "severity".to_string(),
+                "message".to_string(),
+                "file".to_string(),
+                "line".to_string(),
+                "help".to_string(),
+            ],
+            rule_ids: vec!["taint-unsafe-flow".to_string()],
+        },
+    ];
+
+    match format {
+        "text" => {
+            for tool in &tools {
+                println!("{} ({})", tool.name, tool.binary);
+                println!("  Description: {}", tool.description);
+                println!("  Supported Formats: {}", tool.supported_formats.join(", "));
+                println!("  Output Fields: {}", tool.output_fields.join(", "));
+                println!("  Rule IDs: {}", tool.rule_ids.join(", "));
+                println!();
+            }
+        }
+        _ => {
+            println!("{}", serde_json::to_string_pretty(&tools).unwrap());
+        }
+    }
 }
 
 // MAIN
@@ -806,6 +1135,11 @@ fn main() {
             checks,
             debounce_ms,
         } => watch_mode(&path, &checks, debounce_ms),
+
+        Commands::Discover { format } => {
+            discover_command(&format);
+            0
+        }
     };
 
     std::process::exit(exit_code);
@@ -839,6 +1173,8 @@ fn run_tool(crate_name: &str, bin_name: &str, args: &[&str], tool_start: Instant
                         duration_ms: tool_start.elapsed().as_millis() as u64,
                         data: serde_json::Value::Null,
                         error: Some(format!("Failed to run: {}", e)),
+                        suggested_fix: None,
+                        auto_fix_available: None,
                     };
                 }
             }
@@ -870,6 +1206,8 @@ fn run_tool(crate_name: &str, bin_name: &str, args: &[&str], tool_start: Instant
         duration_ms,
         data,
         error,
+        suggested_fix: None,
+        auto_fix_available: None,
     }
 }
 
@@ -1128,6 +1466,9 @@ fn run_batch(
 
 fn output_ndjson(report: &CheckReport) {
     for check in &report.checks {
+        let severity = check.severity.as_deref().unwrap_or("warning");
+        let rule_id = check.rule_id.as_deref().unwrap_or(&check.name);
+        let help = check.help.as_deref().unwrap_or("");
         if !check.passed {
             let items = check
                 .details
@@ -1140,8 +1481,10 @@ fn output_ndjson(report: &CheckReport) {
                     "{}",
                     serde_json::json!({
                         "tool": check.name,
-                        "severity": "warning",
+                        "severity": severity,
+                        "rule_id": rule_id,
                         "message": check.message,
+                        "help": help,
                         "file": report.path,
                         "line": null,
                         "col": null,
@@ -1153,8 +1496,10 @@ fn output_ndjson(report: &CheckReport) {
                         "{}",
                         serde_json::json!({
                             "tool": check.name,
-                            "severity": "warning",
+                            "severity": severity,
+                            "rule_id": rule_id,
                             "message": item.get("type").and_then(|v| v.as_str()).unwrap_or(&check.name),
+                            "help": help,
                             "file": item.get("file"),
                             "line": item.get("line"),
                             "col": null,

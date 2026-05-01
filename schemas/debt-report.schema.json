@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quality-tools.dev/schemas/debt-report.schema.json",
+  "title": "DebtReport",
+  "description": "Technical debt scan report",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DebtItem"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/DebtSummary"
+    }
+  },
+  "$defs": {
+    "DebtItem": {
+      "type": "object",
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer" },
+        "marker_type": { "type": "string" },
+        "text": { "type": "string" },
+        "author": { "type": ["string", "null"] },
+        "date": { "type": ["string", "null"] },
+        "code_context": { "type": ["string", "null"] },
+        "suggested_fix": { "type": ["string", "null"] },
+        "auto_fix_available": { "type": ["boolean", "null"] }
+      },
+      "required": ["file", "line", "marker_type", "text"]
+    },
+    "DebtSummary": {
+      "type": "object",
+      "properties": {
+        "total": { "type": "integer" },
+        "todo": { "type": "integer" },
+        "fixme": { "type": "integer" },
+        "hack": { "type": "integer" },
+        "xxx": { "type": "integer" },
+        "by_author": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

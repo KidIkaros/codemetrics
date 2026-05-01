@@ -45,6 +45,9 @@ struct FuzzableFunction {
     is_public: bool,
     complexity: u32,
     has_harness: bool,
+    /// Confidence level in the fuzzability assessment (0.0 to 1.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confidence: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -71,7 +74,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let target_path = Path::new(&cli.path);
 
     // Supported languages for fuzzing analysis
-    let supported_exts = ["rs", "py", "js", "ts", "go", "rb", "swift"];
+    let supported_exts = [
+        "rs", "py", "js", "ts", "go", "rb", "swift", "c", "cpp", "h", "cs", "java", "php",
+    ];
 
     let source_files = if target_path.is_dir() {
         find_source_files(&cli.path, cli.recursive, &supported_exts)
@@ -181,6 +186,11 @@ fn analyze_file(
         Language::Go => analyze_go_file(source, &file_str),
         Language::Ruby => analyze_ruby_file(source, &file_str),
         Language::Swift => analyze_swift_file(source, &file_str),
+        Language::C => analyze_c_file(source, &file_str),
+        Language::Cpp => analyze_cpp_file(source, &file_str),
+        Language::CSharp => analyze_csharp_file(source, &file_str),
+        Language::Java => analyze_java_file(source, &file_str),
+        Language::Php => analyze_php_file(source, &file_str),
         _ => Vec::new(),
     }
 }
@@ -407,6 +417,481 @@ fn analyze_swift_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     functions
 }
 
+fn analyze_c_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
+    let mut functions = Vec::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("int ") && trimmed.contains('(') {
+            if let Some(mut f) = parse_c_fn_sig(trimmed, file, line_num) {
+                f.complexity = parse_complexity(source, file, Language::C)
+                    .into_iter()
+                    .find(|func| func.name == f.name)
+                    .map_or(10, |func| func.complexity);
+                functions.push(f);
+            }
+        }
+    }
+
+    functions
+}
+
+fn analyze_cpp_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
+    let mut functions = Vec::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        let has_type = trimmed.starts_with("int ")
+            || trimmed.starts_with("void ")
+            || trimmed.starts_with("bool ")
+            || trimmed.starts_with("char ")
+            || trimmed.starts_with("float ")
+            || trimmed.starts_with("double ");
+        if has_type && trimmed.contains('(') {
+            if let Some(mut f) = parse_c_fn_sig(trimmed, file, line_num) {
+                f.complexity = parse_complexity(source, file, Language::Cpp)
+                    .into_iter()
+                    .find(|func| func.name == f.name)
+                    .map_or(10, |func| func.complexity);
+                functions.push(f);
+            }
+        }
+    }
+
+    functions
+}
+
+fn analyze_csharp_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
+    let mut functions = Vec::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        let has_visibility = trimmed.starts_with("public ")
+            || trimmed.starts_with("private ")
+            || trimmed.starts_with("protected ")
+            || trimmed.starts_with("internal ")
+            || trimmed.starts_with("static ")
+            || trimmed.starts_with("virtual ");
+        let has_type =
+            trimmed.contains("void") || trimmed.contains("int") || trimmed.contains("string");
+        if has_visibility && has_type && trimmed.contains('(') {
+            if let Some(mut f) = parse_csharp_fn_sig(trimmed, file, line_num) {
+                f.complexity = parse_complexity(source, file, Language::CSharp)
+                    .into_iter()
+                    .find(|func| func.name == f.name)
+                    .map_or(10, |func| func.complexity);
+                functions.push(f);
+            }
+        }
+    }
+
+    functions
+}
+
+fn analyze_java_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
+    let mut functions = Vec::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        let has_visibility = trimmed.starts_with("public ")
+            || trimmed.starts_with("private ")
+            || trimmed.starts_with("protected ")
+            || trimmed.starts_with("static ");
+        let has_type = trimmed.contains("void")
+            || trimmed.contains("int")
+            || trimmed.contains("boolean")
+            || trimmed.contains("String");
+        if has_visibility && has_type && trimmed.contains('(') {
+            if let Some(mut f) = parse_java_fn_sig(trimmed, file, line_num) {
+                f.complexity = parse_complexity(source, file, Language::Java)
+                    .into_iter()
+                    .find(|func| func.name == f.name)
+                    .map_or(10, |func| func.complexity);
+                functions.push(f);
+            }
+        }
+    }
+
+    functions
+}
+
+fn analyze_php_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
+    let mut functions = Vec::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("function ") && trimmed.contains('(') {
+            if let Some(mut f) = parse_php_fn_sig(trimmed, file, line_num) {
+                f.complexity = parse_complexity(source, file, Language::Php)
+                    .into_iter()
+                    .find(|func| func.name == f.name)
+                    .map_or(10, |func| func.complexity);
+                functions.push(f);
+            }
+        }
+    }
+
+    functions
+}
+
+fn parse_c_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
+    let after_type = sig.split_whitespace().nth(1)?;
+    let name_end = after_type.find(|c: char| c == '(' || c.is_whitespace())?;
+    let name = after_type[..name_end].trim().to_string();
+
+    let params_start = sig.find('(')?;
+    let params_end = sig.rfind(')')?;
+    let params_str = &sig[params_start + 1..params_end];
+
+    let params: Vec<String> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    };
+
+    let mut score = 0u32;
+    let mut fuzzable_params = Vec::new();
+
+    for param in &params {
+        let param_lower = param.to_lowercase();
+        if param_lower.contains("char*") || param_lower.contains("unsigned char*") {
+            score += 30;
+            fuzzable_params.push(param.clone());
+        } else if param_lower.contains("char[]") || param_lower.contains("char *") {
+            score += 20;
+            fuzzable_params.push(param.clone());
+        }
+    }
+
+    if score == 0 {
+        return None;
+    }
+
+    let is_public = true;
+    score += params.len() as u32 * 2;
+
+    let complexity = estimate_c_complexity(sig);
+    if complexity > 5 {
+        score += 5;
+    }
+
+    Some(FuzzableFunction {
+        name,
+        file: file.to_string(),
+        line,
+        params: fuzzable_params,
+        score,
+        is_public,
+        complexity,
+        has_harness: false,
+        confidence: None,
+    })
+}
+
+fn parse_csharp_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
+    let tokens: Vec<&str> = sig.split_whitespace().collect();
+    let name_pos = match tokens
+        .iter()
+        .position(|&t| t == "void" || t == "int" || t == "string")
+    {
+        Some(p) => p,
+        None => return None,
+    };
+    let name = match tokens.get(name_pos + 1) {
+        Some(s) => s.trim().to_string(),
+        None => return None,
+    };
+
+    let params_start = match sig.find('(') {
+        Some(p) => p,
+        None => return None,
+    };
+    let params_end = match sig.rfind(')') {
+        Some(p) => p,
+        None => return None,
+    };
+    let params_str = &sig[params_start + 1..params_end];
+
+    let params: Vec<String> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    };
+
+    let mut score = 0u32;
+    let mut fuzzable_params = Vec::new();
+
+    for param in &params {
+        let param_lower = param.to_lowercase();
+        if param_lower.contains("string") {
+            score += 20;
+            fuzzable_params.push(param.clone());
+        } else if param_lower.contains("[]") || param_lower.contains("[") {
+            score += 15;
+            fuzzable_params.push(param.clone());
+        }
+    }
+
+    if score == 0 {
+        return None;
+    }
+
+    let is_public = sig.starts_with("public ");
+    score += params.len() as u32 * 2;
+
+    let complexity = estimate_csharp_complexity(sig);
+    if complexity > 5 {
+        score += 5;
+    }
+
+    Some(FuzzableFunction {
+        name,
+        file: file.to_string(),
+        line,
+        params: fuzzable_params,
+        score,
+        is_public,
+        complexity,
+        has_harness: false,
+        confidence: None,
+    })
+}
+
+fn parse_java_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
+    let tokens: Vec<&str> = sig.split_whitespace().collect();
+    let name_pos = match tokens
+        .iter()
+        .position(|&t| t == "void" || t == "int" || t == "boolean" || t == "String")
+    {
+        Some(p) => p,
+        None => return None,
+    };
+    let name = match tokens.get(name_pos + 1) {
+        Some(s) => s.trim().to_string(),
+        None => return None,
+    };
+
+    let params_start = match sig.find('(') {
+        Some(p) => p,
+        None => return None,
+    };
+    let params_end = match sig.rfind(')') {
+        Some(p) => p,
+        None => return None,
+    };
+    let params_str = &sig[params_start + 1..params_end];
+
+    let params: Vec<String> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    };
+
+    let mut score = 0u32;
+    let mut fuzzable_params = Vec::new();
+
+    for param in &params {
+        let param_lower = param.to_lowercase();
+        if param_lower.contains("string") {
+            score += 20;
+            fuzzable_params.push(param.clone());
+        } else if param_lower.contains("[]") || param_lower.contains("[") {
+            score += 15;
+            fuzzable_params.push(param.clone());
+        }
+    }
+
+    if score == 0 {
+        return None;
+    }
+
+    let is_public = sig.starts_with("public ");
+    score += params.len() as u32 * 2;
+
+    let complexity = estimate_java_complexity(sig);
+    if complexity > 5 {
+        score += 5;
+    }
+
+    Some(FuzzableFunction {
+        name,
+        file: file.to_string(),
+        line,
+        params: fuzzable_params,
+        score,
+        is_public,
+        complexity,
+        has_harness: false,
+        confidence: None,
+    })
+}
+
+fn parse_php_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
+    let after_fn = if let Some(pos) = sig.find("function ") {
+        &sig[pos + 9..]
+    } else {
+        return None;
+    };
+
+    let name_end = after_fn.find('(')?;
+    let name = after_fn[..name_end].trim().to_string();
+
+    let params_start = sig.find('(')?;
+    let params_end = sig.rfind(')')?;
+    let params_str = &sig[params_start + 1..params_end];
+
+    let params: Vec<String> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    };
+
+    let mut score = 0u32;
+    let mut fuzzable_params = Vec::new();
+
+    for param in &params {
+        let param_lower = param.to_lowercase();
+        if param_lower.contains("string") || param_lower.contains("$") {
+            score += 20;
+            fuzzable_params.push(param.clone());
+        } else if param_lower.contains("array") || param_lower.contains("[]") {
+            score += 15;
+            fuzzable_params.push(param.clone());
+        }
+    }
+
+    if score == 0 {
+        return None;
+    }
+
+    let is_public = true;
+    score += params.len() as u32 * 2;
+
+    let complexity = estimate_php_complexity(sig);
+    if complexity > 5 {
+        score += 5;
+    }
+
+    Some(FuzzableFunction {
+        name,
+        file: file.to_string(),
+        line,
+        params: fuzzable_params,
+        score,
+        is_public,
+        complexity,
+        has_harness: false,
+        confidence: None,
+    })
+}
+
+fn estimate_c_complexity(sig: &str) -> u32 {
+    let mut complexity = 1;
+    if sig.contains("if ") {
+        complexity += 1;
+    }
+    if sig.contains("for ") {
+        complexity += 1;
+    }
+    if sig.contains("while ") {
+        complexity += 1;
+    }
+    if sig.contains("switch ") {
+        complexity += 1;
+    }
+    complexity
+}
+
+fn estimate_csharp_complexity(sig: &str) -> u32 {
+    let mut complexity = 1;
+    if sig.contains("if") {
+        complexity += 1;
+    }
+    if sig.contains("for") {
+        complexity += 1;
+    }
+    if sig.contains("while") {
+        complexity += 1;
+    }
+    if sig.contains("switch") {
+        complexity += 1;
+    }
+    if sig.contains("try") {
+        complexity += 1;
+    }
+    complexity
+}
+
+fn estimate_java_complexity(sig: &str) -> u32 {
+    let mut complexity = 1;
+    if sig.contains("if") {
+        complexity += 1;
+    }
+    if sig.contains("for") {
+        complexity += 1;
+    }
+    if sig.contains("while") {
+        complexity += 1;
+    }
+    if sig.contains("switch") {
+        complexity += 1;
+    }
+    if sig.contains("try") {
+        complexity += 1;
+    }
+    complexity
+}
+
+fn estimate_php_complexity(sig: &str) -> u32 {
+    let mut complexity = 1;
+    if sig.contains("if ") {
+        complexity += 1;
+    }
+    if sig.contains("for ") {
+        complexity += 1;
+    }
+    if sig.contains("while ") {
+        complexity += 1;
+    }
+    if sig.contains("switch ") {
+        complexity += 1;
+    }
+    if sig.contains("foreach") {
+        complexity += 1;
+    }
+    if sig.contains("catch") {
+        complexity += 1;
+    }
+    complexity
+}
+
 fn parse_rust_fn_sig(
     sig: &str,
     file: &str,
@@ -507,6 +992,7 @@ fn parse_rust_fn_sig(
         is_public,
         complexity,
         has_harness,
+        confidence: None,
     })
 }
 
@@ -584,6 +1070,7 @@ fn parse_python_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFun
         is_public,
         complexity,
         has_harness: false, // No harness tracking for Python yet
+        confidence: None,
     })
 }
 
@@ -670,6 +1157,7 @@ fn parse_js_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunctio
         is_public,
         complexity,
         has_harness: false, // No harness tracking for JS yet
+        confidence: None,
     })
 }
 
@@ -747,6 +1235,7 @@ fn parse_go_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunctio
         is_public,
         complexity,
         has_harness: false, // No harness tracking for Go yet
+        confidence: None,
     })
 }
 
@@ -875,6 +1364,7 @@ fn parse_ruby_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunct
         is_public,
         complexity,
         has_harness: false, // No harness tracking for Ruby yet
+        confidence: None,
     })
 }
 
@@ -961,6 +1451,7 @@ fn parse_swift_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunc
         is_public,
         complexity,
         has_harness: false, // No harness tracking for Swift yet
+        confidence: None,
     })
 }
 
