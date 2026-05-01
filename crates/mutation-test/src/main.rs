@@ -201,105 +201,269 @@ fn count_potential_mutations(source: &str, lang: &str) -> usize {
     match lang {
         "Ruby" => {
             // Count operators that could be mutated
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("&&") { count += source.matches("&&").count(); }
-            if source.contains("||") { count += source.matches("||").count(); }
-            if source.contains("if ") { count += source.matches("if ").count(); }
-            if source.contains("for ") { count += source.matches("for ").count(); }
-            if source.contains("while ") { count += source.matches("while ").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("while ") {
+                count += source.matches("while ").count();
+            }
         }
         "Swift" => {
             // Count Swift operators
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("&&") { count += source.matches("&&").count(); }
-            if source.contains("||") { count += source.matches("||").count(); }
-            if source.contains("if ") { count += source.matches("if ").count(); }
-            if source.contains("for ") { count += source.matches("for ").count(); }
-            if source.contains("while ") { count += source.matches("while ").count(); }
-            if source.contains("switch ") { count += source.matches("switch ").count(); }
-            if source.contains("guard ") { count += source.matches("guard ").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("while ") {
+                count += source.matches("while ").count();
+            }
+            if source.contains("switch ") {
+                count += source.matches("switch ").count();
+            }
+            if source.contains("guard ") {
+                count += source.matches("guard ").count();
+            }
         }
         "Python" => {
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("and ") { count += source.matches("and ").count(); }
-            if source.contains("or ") { count += source.matches("or ").count(); }
-            if source.contains("if ") { count += source.matches("if ").count(); }
-            if source.contains("for ") { count += source.matches("for ").count(); }
-            if source.contains("while ") { count += source.matches("while ").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("and ") {
+                count += source.matches("and ").count();
+            }
+            if source.contains("or ") {
+                count += source.matches("or ").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("while ") {
+                count += source.matches("while ").count();
+            }
         }
         "C" | "C++" => {
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("&&") { count += source.matches("&&").count(); }
-            if source.contains("||") { count += source.matches("||").count(); }
-            if source.contains("if ") { count += source.matches("if ").count(); }
-            if source.contains("for ") { count += source.matches("for ").count(); }
-            if source.contains("while ") { count += source.matches("while ").count(); }
-            if source.contains("switch ") { count += source.matches("switch ").count(); }
-            if source.contains("case ") { count += source.matches("case ").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("while ") {
+                count += source.matches("while ").count();
+            }
+            if source.contains("switch ") {
+                count += source.matches("switch ").count();
+            }
+            if source.contains("case ") {
+                count += source.matches("case ").count();
+            }
         }
         "C#" => {
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("&&") { count += source.matches("&&").count(); }
-            if source.contains("||") { count += source.matches("||").count(); }
-            if source.contains("if") { count += source.matches("if").count(); }
-            if source.contains("for") { count += source.matches("for").count(); }
-            if source.contains("while") { count += source.matches("while").count(); }
-            if source.contains("switch") { count += source.matches("switch").count(); }
-            if source.contains("try") { count += source.matches("try").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if") {
+                count += source.matches("if").count();
+            }
+            if source.contains("for") {
+                count += source.matches("for").count();
+            }
+            if source.contains("while") {
+                count += source.matches("while").count();
+            }
+            if source.contains("switch") {
+                count += source.matches("switch").count();
+            }
+            if source.contains("try") {
+                count += source.matches("try").count();
+            }
         }
         "Java" => {
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("&&") { count += source.matches("&&").count(); }
-            if source.contains("||") { count += source.matches("||").count(); }
-            if source.contains("if") { count += source.matches("if").count(); }
-            if source.contains("for") { count += source.matches("for").count(); }
-            if source.contains("while") { count += source.matches("while").count(); }
-            if source.contains("switch") { count += source.matches("switch").count(); }
-            if source.contains("case") { count += source.matches("case").count(); }
-            if source.contains("try") { count += source.matches("try").count(); }
-            if source.contains("catch") { count += source.matches("catch").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if") {
+                count += source.matches("if").count();
+            }
+            if source.contains("for") {
+                count += source.matches("for").count();
+            }
+            if source.contains("while") {
+                count += source.matches("while").count();
+            }
+            if source.contains("switch") {
+                count += source.matches("switch").count();
+            }
+            if source.contains("case") {
+                count += source.matches("case").count();
+            }
+            if source.contains("try") {
+                count += source.matches("try").count();
+            }
+            if source.contains("catch") {
+                count += source.matches("catch").count();
+            }
         }
         "PHP" => {
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("&&") { count += source.matches("&&").count(); }
-            if source.contains("||") { count += source.matches("||").count(); }
-            if source.contains("if ") { count += source.matches("if ").count(); }
-            if source.contains("for ") { count += source.matches("for ").count(); }
-            if source.contains("while ") { count += source.matches("while ").count(); }
-            if source.contains("switch ") { count += source.matches("switch ").count(); }
-            if source.contains("case ") { count += source.matches("case ").count(); }
-            if source.contains("foreach") { count += source.matches("foreach").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("while ") {
+                count += source.matches("while ").count();
+            }
+            if source.contains("switch ") {
+                count += source.matches("switch ").count();
+            }
+            if source.contains("case ") {
+                count += source.matches("case ").count();
+            }
+            if source.contains("foreach") {
+                count += source.matches("foreach").count();
+            }
         }
         "Go" => {
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("&&") { count += source.matches("&&").count(); }
-            if source.contains("||") { count += source.matches("||").count(); }
-            if source.contains("if ") { count += source.matches("if ").count(); }
-            if source.contains("for ") { count += source.matches("for ").count(); }
-            if source.contains("switch ") { count += source.matches("switch ").count(); }
-            if source.contains("case ") { count += source.matches("case ").count(); }
-            if source.contains("select ") { count += source.matches("select ").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if ") {
+                count += source.matches("if ").count();
+            }
+            if source.contains("for ") {
+                count += source.matches("for ").count();
+            }
+            if source.contains("switch ") {
+                count += source.matches("switch ").count();
+            }
+            if source.contains("case ") {
+                count += source.matches("case ").count();
+            }
+            if source.contains("select ") {
+                count += source.matches("select ").count();
+            }
         }
         "JavaScript/TypeScript" => {
-            if source.contains("==") { count += source.matches("==").count(); }
-            if source.contains("!=") { count += source.matches("!=").count(); }
-            if source.contains("&&") { count += source.matches("&&").count(); }
-            if source.contains("||") { count += source.matches("||").count(); }
-            if source.contains("if") { count += source.matches("if").count(); }
-            if source.contains("for") { count += source.matches("for").count(); }
-            if source.contains("while") { count += source.matches("while").count(); }
-            if source.contains("switch") { count += source.matches("switch").count(); }
-            if source.contains("case") { count += source.matches("case").count(); }
-            if source.contains("try") { count += source.matches("try").count(); }
-            if source.contains("catch") { count += source.matches("catch").count(); }
+            if source.contains("==") {
+                count += source.matches("==").count();
+            }
+            if source.contains("!=") {
+                count += source.matches("!=").count();
+            }
+            if source.contains("&&") {
+                count += source.matches("&&").count();
+            }
+            if source.contains("||") {
+                count += source.matches("||").count();
+            }
+            if source.contains("if") {
+                count += source.matches("if").count();
+            }
+            if source.contains("for") {
+                count += source.matches("for").count();
+            }
+            if source.contains("while") {
+                count += source.matches("while").count();
+            }
+            if source.contains("switch") {
+                count += source.matches("switch").count();
+            }
+            if source.contains("case") {
+                count += source.matches("case").count();
+            }
+            if source.contains("try") {
+                count += source.matches("try").count();
+            }
+            if source.contains("catch") {
+                count += source.matches("catch").count();
+            }
         }
         _ => {}
     }
