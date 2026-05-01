@@ -1073,24 +1073,10 @@ fn parse_python_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFun
 }
 
 fn parse_js_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
-    // Extract function name
-    let name = if sig.starts_with("function ") {
-        let after_func = &sig["function ".len()..];
-        let name_end = after_func.find('(')?;
-        after_func[..name_end].trim().to_string()
-    } else if (sig.starts_with("const ") || sig.starts_with("let ")) {
-        // Handle arrow functions: const foo = (a, b) => {}
-        let after_kw = sig.split_whitespace().nth(1)?;
-        let name_part = after_kw.split('=').next()?.trim();
-        let name_end = name_part.find('(')?;
-        name_part[..name_end].trim().to_string()
-    } else {
-        return None;
-    };
-
-    if name.is_empty() {
-        return None;
-    }
+    let name = extract_fn_name(
+        sig,
+        &["function ", "const ", "let ", "var ", "async function "],
+    )?;
 
     // Extract parameters
     let params_start = sig.find('(')?;
