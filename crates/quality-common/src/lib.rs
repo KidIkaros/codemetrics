@@ -687,6 +687,15 @@ impl SarifLog {
 /// Convenience builder for a single-tool SARIF run.
 
 /// Get detailed information about a rule for SARIF output.
+///
+/// Returns a tuple of (short_description, full_description, help_text)
+/// for a given rule ID. This is used to populate SARIF rule definitions.
+///
+/// # Arguments
+/// * `rule_id` - The rule ID to look up
+///
+/// # Returns
+/// Tuple of (short_desc, full_desc, help_text)
 pub fn get_rule_details(rule_id: &str) -> (String, String, String) {
     match rule_id {
         "crap-error" => (
@@ -722,6 +731,19 @@ pub fn get_rule_details(rule_id: &str) -> (String, String, String) {
     }
 }
 
+/// Create a SARIF run structure for tool results.
+///
+/// Generates a complete SARIF run with tool information, rules, and results.
+/// This is used to format tool output in SARIF format for GitHub Security and VS Code integration.
+///
+/// # Arguments
+/// * `tool_name` - Name of the tool (e.g., "crap", "debt")
+/// * `tool_version` - Version of the tool
+/// * `results` - Vector of SarifResult structs containing the findings
+/// * `exit_code` - Exit code from the tool execution
+///
+/// # Returns
+/// A SarifRun struct ready for serialization to SARIF format
 pub fn sarif_run(
     tool_name: &str,
     tool_version: &str,

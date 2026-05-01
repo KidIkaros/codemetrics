@@ -872,6 +872,18 @@ fn fingerprint_recurse(node: Node<'_>, tokens: &mut Vec<&'static str>, depth: u3
     }
 }
 
+/// Parse fingerprints from a source string.
+///
+/// Extracts function fingerprints (normalized statement patterns) from source code
+/// for code duplication detection. Uses tree-sitter to parse the AST.
+///
+/// # Arguments
+/// * `source` - Source code to analyze
+/// * `file` - File path (for fingerprint metadata)
+/// * `lang` - Programming language
+///
+/// # Returns
+/// Vector of BlockFingerprint structs with fingerprint data
 pub fn parse_fingerprints(source: &str, file: &str, lang: Language) -> Vec<BlockFingerprint> {
     parse_with_tree(source, lang, |tree| {
         let func_kinds = function_node_kinds(lang);
