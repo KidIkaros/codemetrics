@@ -170,3 +170,8 @@
 **Issue:** Many repeated patterns across language parsers
 **Goal:** Create shared helper functions for common patterns
 **Status:** Starting now...
+## MOVING ON: Code Duplication in ast-parse-ts
+
+**Goal:** Create shared helper functions for common patterns across language parsers
+**Status:** Starting now...
+**Current state:** count_potential_mutations STUCK after 35+ messages
