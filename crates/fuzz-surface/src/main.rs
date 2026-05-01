@@ -607,27 +607,21 @@ fn parse_c_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction
 }
 
 fn parse_csharp_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
-    let tokens: Vec<&str> = sig.split_whitespace().collect();
-    let name_pos = match tokens
-        .iter()
-        .position(|&t| t == "void" || t == "int" || t == "string")
-    {
-        Some(p) => p,
-        None => return None,
-    };
-    let name = match tokens.get(name_pos + 1) {
-        Some(s) => s.trim().to_string(),
-        None => return None,
-    };
+    let name = extract_fn_name(
+        sig,
+        &[
+            "void ",
+            "int ",
+            "string ",
+            "static ",
+            "public ",
+            "private ",
+            "protected ",
+        ],
+    )?;
 
-    let params_start = match sig.find('(') {
-        Some(p) => p,
-        None => return None,
-    };
-    let params_end = match sig.rfind(')') {
-        Some(p) => p,
-        None => return None,
-    };
+    let params_start = sig.find('(')?;
+    let params_end = sig.rfind(')')?;
     let params_str = &sig[params_start + 1..params_end];
 
     let params: Vec<String> = if params_str.is_empty() {
@@ -644,30 +638,27 @@ fn parse_csharp_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFun
 
     for param in &params {
         let param_lower = param.to_lowercase();
-        if param_lower.contains("string") {
+        if param_lower.contains("string") || param_lower.contains(": string") {
             score += 20;
             fuzzable_params.push(param.clone());
-        } else if param_lower.contains("[]") || param_lower.contains("[") {
+        } else if param_lower.contains("array") || param_lower.contains("[]") {
             score += 15;
             fuzzable_params.push(param.clone());
         }
     }
 
-    if score == 0 {
-        return None;
-    }
-
-    let is_public = sig.starts_with("public ");
-    score += params.len() as u32 * 2;
-
-    let complexity = estimate_csharp_complexity(sig);
-    if complexity > 5 {
-        score += 5;
-    }
-
     Some(FuzzableFunction {
         name,
         file: file.to_string(),
+        line,
+        params: fuzzable_params,
+        score,
+        is_public: sig.to_lowercase().contains("public"),
+        complexity: estimate_csharp_complexity(sig),
+        has_harness: false,
+        confidence: None,
+    })
+}
         line,
         params: fuzzable_params,
         score,
