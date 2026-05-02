@@ -50,6 +50,12 @@ struct Violation {
     /// Confidence level in the taint violation detection (0.0 to 1.0)
     #[serde(skip_serializing_if = "Option::is_none")]
     confidence: Option<f64>,
+    /// Suggested fix for the taint violation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_fix: Option<String>,
+    /// Whether an auto-fix is available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_fix_available: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -209,10 +215,11 @@ fn output_table(report: &TaintReport) {
         println!("  VIOLATIONS:");
         let columns = [
             Column::left("SEV", 8),
-            Column::left("TYPE", 14),
-            Column::left("VAR", 20),
-            Column::left("FILE", 20),
+            Column::left("TYPE", 12),
+            Column::left("VAR", 15),
+            Column::left("FILE", 15),
             Column::right("LINE", 5),
+            Column::left("HINT", 40),
         ];
         print_table_header(&columns);
         for v in &report.violations {
@@ -221,14 +228,17 @@ fn output_table(report: &TaintReport) {
                 "medium" => "!",
                 _ => "•",
             };
+            let hint = v.suggested_fix.as_deref().unwrap_or("");
+            let hint_truncated = if hint.len() > 37 { &hint[0..37] } else { hint };
             print_table_row(
                 &columns,
                 &[
                     &format!("{} {}", sev_icon, v.severity),
                     &v.violation_type,
                     &v.variable,
-                    &v.file,
+                    &truncate(&v.file, 14),
                     &v.line.to_string(),
+                    hint_truncated,
                 ],
             );
         }
@@ -335,6 +345,8 @@ fn analyze_file_multilang(
                         severity: "high".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
+                        suggested_fix: Some(get_taint_hint("LOG_LEAK", &var, trimmed)),
+                        auto_fix_available: Some(false),
                     });
                 } else if is_print_sink_multilang(trimmed, lang) {
                     violations.push(Violation {
@@ -345,6 +357,8 @@ fn analyze_file_multilang(
                         severity: "high".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
+                        suggested_fix: Some(get_taint_hint("PRINT_LEAK", &var, trimmed)),
+                        auto_fix_available: Some(false),
                     });
                 } else if is_file_write_sink_multilang(trimmed, lang) {
                     violations.push(Violation {
@@ -355,6 +369,8 @@ fn analyze_file_multilang(
                         severity: "medium".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
+                        suggested_fix: Some(get_taint_hint("FILE_WRITE", &var, trimmed)),
+                        auto_fix_available: Some(false),
                     });
                 } else if is_public_return_multilang(trimmed, var, lang) {
                     violations.push(Violation {
@@ -365,6 +381,8 @@ fn analyze_file_multilang(
                         severity: "medium".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
+                        suggested_fix: Some(get_taint_hint("UNFILTERED_RETURN", &var, trimmed)),
+                        auto_fix_available: Some(false),
                     });
                 } else if is_debug_sink_multilang(trimmed, lang) {
                     violations.push(Violation {
@@ -375,6 +393,8 @@ fn analyze_file_multilang(
                         severity: "low".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
+                        suggested_fix: Some(get_taint_hint("DEBUG_LEAK", &var, trimmed)),
+                        auto_fix_available: Some(false),
                     });
                 }
             }
@@ -471,6 +491,36 @@ fn extract_lhs_go(line: &str) -> Option<String> {
         Some(lhs)
     } else {
         None
+    }
+}
+
+/// Generate guided hints for taint violations
+fn get_taint_hint(violation_type: &str, variable: &str, _context: &str) -> String {
+    match violation_type {
+        "LOG_LEAK" => format!(
+            "Sensitive data '{}' leaked via logging. Fix: 1) Remove sensitive fields before logging, 2) Use redaction (e.g., '***'), 3) Implement structured logging with field-level privacy.",
+            variable
+        ),
+        "PRINT_LEAK" => format!(
+            "Sensitive data '{}' printed to stdout/stderr. Fix: 1) Remove print statements in production, 2) Use proper logging framework, 3) Redact sensitive values.",
+            variable
+        ),
+        "FILE_WRITE" => format!(
+            "Sensitive data '{}' written to file. Fix: 1) Ensure file permissions (600), 2) Encrypt sensitive data at rest, 3) Use secure file APIs.",
+            variable
+        ),
+        "UNFILTERED_RETURN" => format!(
+            "Sensitive data '{}' returned unfiltered. Fix: 1) Sanitize return value, 2) Use DTOs without sensitive fields, 3) Add output validation.",
+            variable
+        ),
+        "DEBUG_LEAK" => format!(
+            "Sensitive data '{}' in debug output. Fix: 1) Guard with debug flags, 2) Remove from production builds, 3) Use conditional compilation.",
+            variable
+        ),
+        _ => format!(
+            "Potential taint violation with '{}'. Review data flow and apply appropriate sanitization or access controls.",
+            variable
+        ),
     }
 }
 
