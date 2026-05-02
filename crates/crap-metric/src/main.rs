@@ -56,6 +56,10 @@ struct FunctionReport {
     severity: String,
     help: String,
     rule_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_fix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_fix_available: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -138,19 +142,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "excellent" | "good" => (
                     "info".to_string(),
                     "crap-pass".to_string(),
-                    "Function has acceptable CRAP score.".to_string(),
+                    format!(
+                        "Function has excellent CRAP score ({:.1}). Complexity: {}, Coverage: {:.1}%.",
+                        score, func.complexity, coverage_pct
+                    ),
                 ),
                 "acceptable" => (
                     "warning".to_string(),
                     "crap-warning".to_string(),
-                    "Function has moderate CRAP score. Consider refactoring or adding tests."
-                        .to_string(),
+                    format!(
+                        "CRAP score {:.1} (threshold: 30). To improve: 1) Extract helper functions (complexity: {}), 2) Add tests (coverage: {:.1}%).",
+                        score, func.complexity, coverage_pct
+                    ),
                 ),
                 _ => (
                     "error".to_string(),
                     "crap-error".to_string(),
-                    "Function has high CRAP score. Reduce complexity or increase test coverage."
-                        .to_string(),
+                    format!(
+                        "CRAP score {:.1} exceeds threshold (30). Actions: 1) Reduce complexity (current: {}), 2) Increase test coverage (current: {:.1}%). Consider extracting methods or using dependency injection.",
+                        score, func.complexity, coverage_pct
+                    ),
                 ),
             };
 
@@ -164,8 +175,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 crap_score: score,
                 category,
                 severity,
-                help,
+                help: help.clone(),
                 rule_id,
+                suggested_fix: Some(help.clone()),
+                auto_fix_available: Some(false),
             }
         })
         .filter(|r| r.crap_score >= cli.min_score)
@@ -192,13 +205,14 @@ fn output_table(reports: &[FunctionReport]) {
     }
 
     let columns = [
-        Column::left("FUNCTION", 30),
-        Column::left("FILE", 40),
+        Column::left("FUNCTION", 25),
+        Column::left("FILE", 30),
         Column::right("LINE", 4),
         Column::right("COMP", 4),
         Column::right("LINES", 10),
         Column::right("CRAP", 10),
-        Column::left("CATEGORY", 15),
+        Column::left("CATEGORY", 12),
+        Column::left("HINT", 40),
     ];
     print_table_header(&columns);
 
@@ -233,10 +247,15 @@ fn output_table(reports: &[FunctionReport]) {
         let lc_str = r.line_count.to_string();
         let score_str = format!("{:.1}", r.crap_score);
         let cat_str = format!("{} {}", cat_icon, r.category);
+        let hint = if r.help.len() > 37 {
+            &r.help[0..37]
+        } else {
+            &r.help
+        };
         print_table_row(
             &columns,
             &[
-                &r.name, &r.file, &line_str, &comp_str, &lc_str, &score_str, &cat_str,
+                &r.name, &r.file, &line_str, &comp_str, &lc_str, &score_str, &cat_str, hint,
             ],
         );
     }
