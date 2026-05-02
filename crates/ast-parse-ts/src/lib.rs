@@ -26,6 +26,9 @@ pub enum Language {
     Ruby,
     Swift,
     Kotlin,
+    Solidity,
+    Vyper,
+    Ocaml,
     Unknown,
 }
 
@@ -47,6 +50,9 @@ impl Language {
             "rb" => Language::Ruby,
             "swift" => Language::Swift,
             "kt" | "kts" => Language::Kotlin,
+            "sol" => Language::Solidity,
+            "vy" => Language::Vyper,
+            "ml" | "mli" => Language::Ocaml,
             _ => Language::Unknown,
         }
     }
@@ -66,6 +72,9 @@ impl Language {
             Language::Ruby => Some(tree_sitter_ruby::LANGUAGE.into()),
             Language::Swift => Some(tree_sitter_swift::LANGUAGE.into()),
             Language::Kotlin => None, // Disabled: tree-sitter-kotlin uses tree-sitter 0.20, we use 0.26
+            Language::Solidity => Some(tree_sitter_solidity::LANGUAGE.into()),
+            Language::Vyper => None, // Disabled: tree-sitter-vyper crate status uncertain
+            Language::Ocaml => Some(tree_sitter_ocaml::LANGUAGE_OCAML.into()),
             Language::Unknown => None,
         }
     }
@@ -87,6 +96,9 @@ impl std::fmt::Display for Language {
             Language::Ruby => "ruby",
             Language::Swift => "swift",
             Language::Kotlin => "kotlin",
+            Language::Solidity => "solidity",
+            Language::Vyper => "vyper",
+            Language::Ocaml => "ocaml",
             Language::Unknown => "unknown",
         };
         write!(f, "{}", s)
@@ -178,22 +190,26 @@ pub fn parse_doc_coverage_items(source: &str, lang: Language) -> (DocStats, Vec<
 }
 
 fn normalize_doc_kind(ts_kind: &str, _lang: Language) -> String {
-    match ts_kind {
-        "function_item"
-        | "function_definition"
-        | "function_declaration"
-        | "function"
-        | "method_definition"
-        | "method_declaration"
-        | "method_signature"
-        | "impl_item"
-        | "function_declarator"
-        | "local_function_statement" => "fn".to_string(),
-        "struct_item" | "struct_specifier" | "class_declaration" | "class_definition"
-        | "struct_declaration" => "struct".to_string(),
-        "enum_item" | "enum_specifier" | "enum_declaration" => "enum".to_string(),
-        "trait_item" | "interface_declaration" | "trait_declaration" => "trait".to_string(),
-        _ => ts_kind.to_string(),
+        match ts_kind {
+            "function_item"
+            | "function_definition"
+            | "function_declaration"
+            | "function"
+            | "method_definition"
+            | "method_declaration"
+            | "method_signature"
+            | "impl_item"
+            | "function_declarator"
+            => "fn".to_string(),
+            "struct_item" | "struct_specifier" | "class_declaration" | "struct_declaration"
+            => "struct".to_string(),
+            "enum_item" | "enum_specifier" | "enum_declaration"
+            => "enum".to_string(),
+            "trait_item" | "interface_declaration" | "trait_declaration"
+            => "trait".to_string(),
+            "contract_item" => "contract".to_string(),
+            _ => ts_kind.to_string(),
+        }
     }
 }
 
@@ -435,8 +451,7 @@ fn function_node_kinds(lang: Language) -> &'static [&'static str] {
             "method_signature",
         ],
         Language::Go => &["function_declaration", "method_declaration"],
-        Language::C => &["function_declarator"],
-        Language::Cpp => &["function_declarator", "lambda_expression"],
+        Language::C | Language::Cpp => &["function_declarator"],
         Language::CSharp => &[
             "method_declaration",
             "constructor_declaration",
@@ -445,20 +460,29 @@ fn function_node_kinds(lang: Language) -> &'static [&'static str] {
         Language::Java => &[
             "method_declaration",
             "constructor_declaration",
-            "lambda_expression",
         ],
-        Language::Php => &["function_definition", "method_declaration"],
-        Language::Ruby => &["method", "singleton_method", "lambda"],
-        Language::Swift => &[
-            "function_declaration",
-            "init_declaration",
-            "closure_expression",
-            "subscript_declaration",
+        Language::Php => &[
+            "function_definition",
+            "class_declaration",
         ],
+        Language::Ruby => &["function_definition", "method_definition"],
+        Language::Swift => &["function_declaration", "method_declaration"],
         Language::Kotlin => &[
             "function_declaration",
-            "lambda_literal",
-            "anonymous_function",
+            "method_declaration",
+        ],
+        Language::Solidity => &[
+            "function_definition",
+            "contract_item",
+        ],
+        Language::Vyper => &[
+            "function_definition",
+            "contract_item",
+        ],
+        Language::Ocaml => &[
+            "value_definition",
+            "function_definition",
+            "binding_definition",
         ],
         Language::Unknown => &[],
     }
@@ -594,11 +618,35 @@ fn has_doc_comment_before(source: &str, line: usize, lang: Language) -> bool {
                 trimmed.starts_with('#')
             }
             Language::JavaScript | Language::TypeScript => {
-                trimmed.starts_with("/**")
-                    || trimmed.starts_with("* ")
-                    || trimmed.starts_with("*/")
-                    || trimmed.starts_with("//")
+                // Check for /* ... */ comments
+                let after_node = match lang {
+                    Language::JavaScript => node.child_by_field_name("javadoc"),
+                    Language::TypeScript => node.child_by_field_name("tsdoc"),
+                    _ => None,
+                };
+                if let Some(comment_node) = after_node {
+                    trimmed.starts_with('*')
+                        || trimmed.starts_with("/**")
+                } else {
+                    false
+                }
             }
+            Language::Solidity => {
+                // Solidity uses /// for NatSpec comments
+                trimmed.starts_with("///")
+            }
+            Language::Vyper => {
+                // Vyper similar to Python/Solidity
+                trimmed.starts_with("///")
+                    || trimmed.starts_with("/**")
+                    || trimmed.starts_with('#')
+            }
+            Language::Ocaml => {
+                // OCaml uses (** for comments
+                trimmed.starts_with("(**")
+            }
+            _ => has_doc_comment_before(source, line, lang),
+        }
             Language::Go
             | Language::C
             | Language::Cpp
