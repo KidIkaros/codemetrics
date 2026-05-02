@@ -763,6 +763,8 @@ checks = []             # Skip these checks: crap, debt, doc, complexity, duplic
 }
 
 fn discover_command(format: &str) {
+    // Output tool discovery info (existing functionality)
+    // This outputs internal ToolInfo format
     let tools = vec![
         ToolInfo {
             name: "crap".to_string(),
@@ -1105,6 +1107,11 @@ fn main() {
             0
         }
 
+        Commands::Discover { format } => {
+            discover_command(&format);
+            0
+        }
+
         Commands::Run {
             path,
             config,
@@ -1135,11 +1142,6 @@ fn main() {
             checks,
             debounce_ms,
         } => watch_mode(&path, &checks, debounce_ms),
-
-        Commands::Discover { format } => {
-            discover_command(&format);
-            0
-        }
     };
 
     std::process::exit(exit_code);
