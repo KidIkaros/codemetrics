@@ -73,7 +73,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Supported languages for fuzzing analysis
     let supported_exts = [
         "rs", "py", "js", "ts", "go", "c", "cpp", "h", "cs", "java", "php", "rb", "swift", "kt",
-        "kts",
+        "kts", "sol", // Solidity smart contracts
     ];
 
     let source_files = if target_path.is_dir() {
@@ -189,6 +189,7 @@ fn analyze_file(
         Language::Ruby => analyze_ruby_file(source, &file_str),
         Language::Swift => analyze_swift_file(source, &file_str),
         Language::Kotlin => analyze_kotlin_file(source, &file_str),
+        Language::Solidity => analyze_solidity_file(source, &file_str),
         _ => Vec::new(),
     }
 }
@@ -659,11 +660,51 @@ fn analyze_kotlin_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
                     line: line_num,
                     params: vec![],
                     score: 10,
-                    is_public: trimmed.starts_with("public ") || !trimmed.starts_with("private "),
+                    is_public: trimmed.starts_with("public ") || !trimmed.starts_with("private ") || trimmed.starts_with("internal "),
                     complexity: 1,
                     has_harness: false,
                 });
             }
+        }
+    }
+}
+
+// Solidity function analysis (simplified)
+fn analyze_solidity_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
+    let mut functions = Vec::new();
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        // Detect Solidity functions
+        if trimmed.starts_with("function ") && trimmed.contains('(') {
+            let name = trimmed
+                .strip_prefix("function ")
+                .unwrap_or("")
+                .split('(')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                functions.push(FuzzableFunction {
+                    name,
+                    file: file.to_string(),
+                    line: line_num,
+                    params: vec![],
+                    score: 10,
+                    is_public: trimmed.starts_with("public ") || !trimmed.starts_with("private ") || trimmed.starts_with("internal "),
+                    complexity: 1,
+                    has_harness: false,
+                });
+            }
+        }
+    }
+
+    functions
         }
     }
 
