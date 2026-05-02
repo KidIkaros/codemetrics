@@ -35,6 +35,23 @@ Code quality metrics for 10+ languages via `tree-sitter`. All analysis is langua
 
 The `ast-parse-ts` crate uses tree-sitter grammars (pure Rust, no external dependencies) to analyze source files directly — no compilation needed. Now supports 12 languages: Rust, Python, JavaScript, TypeScript, Go, C, C++, C#, Java, PHP, Ruby, Swift, and Kotlin (partial).
 
+### **Planned Languages** (Future Work)
+
+The following smart contract and functional languages are planned for future support:
+
+| Language | Extension | Tree-sitter Crate | Status |
+|----------|-----------|------------------|--------|
+| **Solidity** | `.sol` | `tree-sitter-solidity` | ✅ Research Complete |
+| **Vyper** | `.vy` | Research needed | ⚠️ Crate status uncertain |
+| **OCaml** | `.ml`, `.mli` | `tree-sitter-ocaml` | ✅ Research Complete |
+
+**Implementation Notes:**
+- Solidity: Well-documented tree-sitter grammar available, AST patterns identified
+- Vyper: Grammar exists but Rust crate status unclear; requires verification before implementation
+- OCaml: Stable tree-sitter-ocaml v0.24 available with full query support
+
+**Estimated Effort:** ~25-30 hours per language (3 languages × 8-10 hours/language)
+
 ## AI-Native Toolkit
 
 Designed for headless AI agent integration with:
