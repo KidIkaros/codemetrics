@@ -522,9 +522,9 @@ fn count_branches(node: Node<'_>, branch_kinds: &[&str]) -> u32 {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if branch_kinds.contains(&child.kind()) {
-            count += 1;
+            count = count.saturating_add(1);
         }
-        count += count_branches(child, branch_kinds);
+        count = count.saturating_add(count_branches(child, branch_kinds));
     }
     count
 }
