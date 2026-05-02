@@ -207,8 +207,7 @@ fn analyze_rust_file(
     let mut brace_depth = 0;
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         if in_fn {
@@ -263,8 +262,7 @@ fn analyze_python_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut indent_level = 0;
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Track indentation level for Python
@@ -318,8 +316,7 @@ fn analyze_js_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Look for function definitions
@@ -346,8 +343,7 @@ fn analyze_go_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Look for Go function definitions
@@ -370,8 +366,7 @@ fn analyze_c_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Detect C/C++ function declarations
@@ -417,8 +412,7 @@ fn analyze_csharp_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Skip comments and attributes
@@ -469,8 +463,7 @@ fn analyze_java_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Skip comments
@@ -521,8 +514,7 @@ fn analyze_php_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Detect PHP functions
@@ -559,15 +551,14 @@ fn analyze_ruby_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         if trimmed.starts_with("def ") {
             let name = trimmed
                 .strip_prefix("def ")
                 .unwrap_or("")
-                .split(|c: char| c == '(' || c == ' ')
+                .split(|c: char| ['(', ' '].contains(&c))
                 .next()
                 .unwrap_or("")
                 .trim()
@@ -600,8 +591,7 @@ fn analyze_swift_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Detect Swift functions
@@ -638,8 +628,7 @@ fn analyze_kotlin_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Detect Kotlin functions
@@ -678,8 +667,7 @@ fn analyze_solidity_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
     let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Detect Solidity functions
@@ -895,8 +883,7 @@ fn parse_python_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFun
 
 fn parse_js_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunction> {
     // Extract function name
-    let name = if sig.starts_with("function ") {
-        let after_func = &sig["function ".len()..];
+    let name = if let Some(after_func) = sig.strip_prefix("function ") {
         let name_end = after_func.find('(')?;
         after_func[..name_end].trim().to_string()
     } else if (sig.starts_with("const ") || sig.starts_with("let ")) {
@@ -1033,7 +1020,7 @@ fn parse_go_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunctio
     }
 
     // Go functions starting with uppercase are exported (public)
-    let is_public = name.chars().next().map_or(false, |c| c.is_uppercase());
+    let is_public = name.chars().next().is_some_and(|c| c.is_uppercase());
 
     // More parameters = more combinations to explore
     score += params.len() as u32 * 2;

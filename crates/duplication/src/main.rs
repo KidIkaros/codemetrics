@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn test_pattern_similarity_partial() {
         let sim = pattern_similarity("A;B;C", "A;B;D");
-        assert!(sim >= 0.5 && sim < 1.0, "Expected >= 0.5, got {}", sim);
+        assert!((0.5..1.0).contains(&sim), "Expected >= 0.5, got {}", sim);
     }
 
     #[test]

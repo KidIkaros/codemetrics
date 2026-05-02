@@ -685,7 +685,6 @@ impl SarifLog {
 }
 
 /// Convenience builder for a single-tool SARIF run.
-
 /// Get detailed information about a rule for SARIF output.
 ///
 /// Returns a tuple of (short_description, full_description, help_text)

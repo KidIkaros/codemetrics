@@ -10,7 +10,9 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use codemetrics_common::{print_table_header, print_table_row, separator, wrap_tool_response, Column};
+use codemetrics_common::{
+    print_table_header, print_table_row, separator, wrap_tool_response, Column,
+};
 
 mod delta;
 
@@ -1551,7 +1553,7 @@ fn output_table(results: &[MutantResult]) {
         "Poor -- test suite needs significant work"
     };
 
-    let summary = vec![
+    let summary = [
         ("Total mutants:", total.to_string()),
         (
             "Killed:",
@@ -1665,7 +1667,7 @@ fn output_table_streaming(
         "Poor -- test suite needs significant work"
     };
 
-    let summary = vec![
+    let summary = [
         ("Total mutants:", total.to_string()),
         (
             "Killed:",
@@ -1818,7 +1820,7 @@ fn test() {
 
     #[test]
     fn test_mutant_has_category() {
-        let mutants = vec![Mutant {
+        let mutants = [Mutant {
             id: 1,
             file: "test.rs".to_string(),
             line: 1,

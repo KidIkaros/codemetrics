@@ -341,10 +341,8 @@ fn analyze_file_js(
     let mut property_tests = Vec::new();
     let mut unit_tests = 0usize;
     let mut functions = HashMap::new();
-    let mut line_num = 0;
 
-    for line in source.lines() {
-        line_num += 1;
+    for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
 
         if trimmed.starts_with("it(")

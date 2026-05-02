@@ -345,7 +345,7 @@ fn analyze_file_multilang(
                         severity: "high".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
-                        suggested_fix: Some(get_taint_hint("LOG_LEAK", &var, trimmed)),
+                        suggested_fix: Some(get_taint_hint("LOG_LEAK", var, trimmed)),
                         auto_fix_available: Some(false),
                     });
                 } else if is_print_sink_multilang(trimmed, lang) {
@@ -357,7 +357,7 @@ fn analyze_file_multilang(
                         severity: "high".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
-                        suggested_fix: Some(get_taint_hint("PRINT_LEAK", &var, trimmed)),
+                        suggested_fix: Some(get_taint_hint("PRINT_LEAK", var, trimmed)),
                         auto_fix_available: Some(false),
                     });
                 } else if is_file_write_sink_multilang(trimmed, lang) {
@@ -369,7 +369,7 @@ fn analyze_file_multilang(
                         severity: "medium".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
-                        suggested_fix: Some(get_taint_hint("FILE_WRITE", &var, trimmed)),
+                        suggested_fix: Some(get_taint_hint("FILE_WRITE", var, trimmed)),
                         auto_fix_available: Some(false),
                     });
                 } else if is_public_return_multilang(trimmed, var, lang) {
@@ -381,7 +381,7 @@ fn analyze_file_multilang(
                         severity: "medium".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
-                        suggested_fix: Some(get_taint_hint("UNFILTERED_RETURN", &var, trimmed)),
+                        suggested_fix: Some(get_taint_hint("UNFILTERED_RETURN", var, trimmed)),
                         auto_fix_available: Some(false),
                     });
                 } else if is_debug_sink_multilang(trimmed, lang) {
@@ -393,7 +393,7 @@ fn analyze_file_multilang(
                         severity: "low".to_string(),
                         context: truncate(trimmed, 60).to_string(),
                         confidence: None,
-                        suggested_fix: Some(get_taint_hint("DEBUG_LEAK", &var, trimmed)),
+                        suggested_fix: Some(get_taint_hint("DEBUG_LEAK", var, trimmed)),
                         auto_fix_available: Some(false),
                     });
                 }
