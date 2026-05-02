@@ -185,8 +185,10 @@ fn try_build_group(
             fingerprint: truncate(&skeletons[i].pattern, 60),
             instances: group_instances,
             similarity: 1.0, // All in group are similar
-            suggested_fix: None,
-            auto_fix_available: None,
+            suggested_fix: Some(
+                "Refactor: Extract common logic into a shared function/module. Consider using composition or inheritance to eliminate duplication.".to_string()
+            ),
+            auto_fix_available: Some(false),
         })
     } else {
         None
@@ -218,6 +220,9 @@ fn output_table(groups: &[DuplicateGroup]) {
     for (i, group) in groups.iter().enumerate() {
         println!("  Group {} ({} instances):", i + 1, group.instances.len());
         println!("    Pattern: {}", group.fingerprint);
+        if let Some(hint) = &group.suggested_fix {
+            println!("    Hint: {}", hint);
+        }
         for inst in &group.instances {
             println!("      - {} ({}:{})", inst.function, inst.file, inst.line);
         }
