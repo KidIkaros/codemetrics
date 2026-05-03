@@ -26,10 +26,10 @@ workspace = true
 workspace = true
 
 [dependencies.ast-parse-ts]
-path = "../ast-parse-ts"
+version = "1.0.0"
 
 [dependencies.codemetrics-common]
-path = "../codemetrics-common"
+version = "1.0.0"
 
 [dependencies.clap]
 version = "4"

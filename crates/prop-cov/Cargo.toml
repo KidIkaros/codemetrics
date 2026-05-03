@@ -26,7 +26,7 @@ workspace = true
 workspace = true
 
 [dependencies.codemetrics-common]
-path = "../codemetrics-common"
+version = "1.0.0"
 
 [dependencies.clap]
 version = "4"
@@ -37,4 +37,4 @@ version = "1"
 features = [ "derive",]
 
 [dependencies.ast-parse-ts]
-path = "../ast-parse-ts"
+version = "1.0.0"

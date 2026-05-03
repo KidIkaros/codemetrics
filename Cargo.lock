@@ -114,6 +114,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "ast-parse-ts"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8149925e02ce63f0e0c7315b913085fa4e9f83d33d98ddc0526736511d8339e"
+dependencies = [
+ "tree-sitter 0.26.8",
+ "tree-sitter-c",
+ "tree-sitter-c-sharp",
+ "tree-sitter-cpp",
+ "tree-sitter-go",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-kotlin",
+ "tree-sitter-ocaml",
+ "tree-sitter-php",
+ "tree-sitter-python",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-solidity",
+ "tree-sitter-swift",
+ "tree-sitter-typescript",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,9 +251,9 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 name = "codemetrics-cli"
 version = "1.0.0"
 dependencies = [
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "notify",
  "serde",
  "serde_json",
@@ -248,11 +272,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "codemetrics-common"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eceae1208f2e1800b491f10605d0025331d32fdca8e4dd86acb48f3b3ec8638"
+dependencies = [
+ "chrono",
+ "clap",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "codemetrics-server"
 version = "1.0.0"
 dependencies = [
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "tokio",
@@ -276,9 +313,9 @@ name = "coupling"
 version = "1.0.0"
 dependencies = [
  "assert_cmd",
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates",
  "rayon",
  "serde",
@@ -290,9 +327,9 @@ name = "crap-metric"
 version = "1.0.0"
 dependencies = [
  "assert_cmd",
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates",
  "serde",
  "serde_json",
@@ -339,7 +376,7 @@ dependencies = [
  "assert_cmd",
  "chrono",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates",
  "serde",
  "serde_json",
@@ -356,9 +393,9 @@ name = "doc-coverage"
 version = "1.0.0"
 dependencies = [
  "assert_cmd",
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates",
  "serde",
  "serde_json",
@@ -369,9 +406,9 @@ name = "duplication"
 version = "1.0.0"
 dependencies = [
  "assert_cmd",
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates",
  "rayon",
  "serde",
@@ -445,9 +482,9 @@ dependencies = [
 name = "fuzz-surface"
 version = "1.0.0"
 dependencies = [
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
 ]
@@ -655,7 +692,7 @@ version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc",
  "predicates",
  "serde",
@@ -774,9 +811,9 @@ name = "prop-cov"
 version = "1.0.0"
 dependencies = [
  "assert_cmd",
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates",
  "serde",
  "serde_json",
@@ -860,9 +897,9 @@ name = "risk-map"
 version = "1.0.0"
 dependencies = [
  "assert_cmd",
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates",
  "serde",
  "serde_json",
@@ -987,9 +1024,9 @@ name = "taint-scan"
 version = "1.0.0"
 dependencies = [
  "assert_cmd",
- "ast-parse-ts",
+ "ast-parse-ts 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
- "codemetrics-common",
+ "codemetrics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates",
  "rayon",
  "serde",

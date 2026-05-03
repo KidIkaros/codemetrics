@@ -27,7 +27,7 @@ workspace = true
 workspace = true
 
 [dependencies.codemetrics-common]
-path = "../codemetrics-common"
+version = "1.0.0"
 
 [dependencies.serde]
 version = "1"
