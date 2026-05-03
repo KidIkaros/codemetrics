@@ -27,16 +27,16 @@
 - **Doc-coverage Rust detection** — `has_doc_comment_before` now skips `#[derive(...)]` and other `#[...]` attribute lines when searching for `///` doc comments, fixing false negatives on all Rust structs and enums with derive macros.
 - **Missing doc comments** — added `///` doc comments to `coverage_pct`, `Column::left`, `Column::right`, SARIF structs, and `SarifLog::add_run` across `ast-parse-ts` and `quality-common`. Both crates now report 100% public API documentation coverage.
 - **Coupling false positives** — `coupling` now filters out external crate imports (e.g., `clap::Parser`, `serde::Serialize`, `assert_cmd::Command`) and wildcard imports (`super::*`, `predicates::prelude::*`), reporting only workspace-local module dependencies.
-- **CRAP category alignment** — `quality_common::crap_category` thresholds restored to `excellent/good/acceptable/crappy` to match `crap-metric` output expectations.
+- **CRAP category alignment** — `codemetrics_common::crap_category` thresholds restored to `excellent/good/acceptable/crappy` to match `crap-metric` output expectations.
 - **Integration test drift** — updated `crap-metric` and `coupling` integration tests to match post-migration output formats and messages.
 - **CRAP category column width** — increased `CATEGORY` column from 12 to 15 bytes so the `△ acceptable` icon+label (14 bytes) is no longer truncated to `… acceptable`.
 - **Duplicate code reduction** — refactored `ast-parse-ts` to use a new `parse_with_tree` helper, eliminating 8 repetitions of the `with_pooled_parser` + `match parser.parse` boilerplate.
 - **Memory exhaustion fix** — added memory monitoring with auto-terminate to prevent OOM crashes on 16GB/32GB systems:
-  - `quality-cli run_batch` now runs tools sequentially (was concurrent with MAX_CONCURRENT=4)
+  - `codemetrics-cli run_batch` now runs tools sequentially (was concurrent with MAX_CONCURRENT=4)
   - Rayon ThreadPoolBuilder reduced from 2 threads to 1 in coupling, duplication, taint-scan
   - MemoryMonitor module reads `/proc/self/status` and `/proc/meminfo` to track RSS
   - Auto-terminates with exit code 137 when memory exceeds 80% of system RAM (configurable via QUALITY_MAX_MEMORY_MB, QUALITY_WARN_THRESHOLD, QUALITY_AUTO_TERMINATE)
-- **Batch runner expansion** — added taint-scan and fuzz-surface to quality-cli run_batch (now 9 tools total)
+- **Batch runner expansion** — added taint-scan and fuzz-surface to codemetrics-cli run_batch (now 9 tools total)
 - **mutation-test exclusion** — removed mutation-test from batch runner because it spawns cargo test processes that bypass parent memory monitoring, causing system crashes. Run manually with explicit resource limits.
 - **mutation-test production rewrite** — complete rewrite to prevent system crashes:
   - **Scratch workspace isolation**: copies entire workspace to `/tmp/mutate-<id>/` (excluding `target/` and `.git/`) so mutations never touch the real source tree

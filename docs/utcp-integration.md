@@ -33,10 +33,10 @@ Use the built-in discover command to get tool info:
 
 ```bash
 # JSON format (for programmatic parsing)
-quality discover --format json
+codemetrics discover --format json
 
 # Text format (for humans)
-quality discover --format text
+codemetrics discover --format text
 ```
 
 ### Option 3: CLI + JSON
@@ -50,7 +50,7 @@ cargo run -p debt-scan -- ./src --recursive --format json
 cargo run -p risk-map -- . --format json
 
 # Full audit
-cargo run -p quality-cli -- run . --format sarif > results.sarif
+cargo run -p codemetrics-cli -- run . --format sarif > results.sarif
 ```
 
 ## AI Agent Integration
@@ -64,7 +64,7 @@ Add to `CLAUDE.md` in project root:
 
 This project uses CodeMetrics. Before significant changes, run:
 
-- `cargo run -p quality-cli -- run . --format sarif` for full audit
+- `cargo run -p codemetrics-cli -- run . --format sarif` for full audit
 - `cargo run -p mutation-test -- . -p <crate> --max 5` to verify tests
 ```
 
@@ -81,7 +81,7 @@ Use CodeMetrics before major changes:
 
 | Tool | Command |
 |------|---------|
-| Full audit | quality run . --format sarif |
+| Full audit | codemetrics run . --format sarif |
 | CRAP scores | cargo run -p crap-metric -- ./src --recursive |
 | Tests | cargo run -p mutation-test -- . -p <crate> --max 5 |
 ```
@@ -110,7 +110,7 @@ for tool in manual["tools"]:
 | Tool | Purpose | CRAP Command | Output |
 |------|---------|-------------|-------|
 | `crap` | Risk scores | `cargo run -p crap-metric -- ./src --recursive` | JSON |
-| `mutate` | Test quality | `cargo run -p mutation-test -- . -p pkg --max 5` | JSON |
+| `mutate` | Test codemetrics | `cargo run -p mutation-test -- . -p pkg --max 5` | JSON |
 | `debt` | TODOs/FIXMEs | `cargo run -p debt-scan -- ./src --recursive` | JSON |
 | `riskmap` | Risk files | `cargo run -p risk-map -- .` | JSON |
 | `doccov` | Doc coverage | `cargo run -p doc-coverage -- ./src --recursive` | JSON |
@@ -118,7 +118,7 @@ for tool in manual["tools"]:
 | `coupling` | Dependencies | `cargo run -p coupling -- .` | JSON |
 | `dupfind` | Duplication | `cargo run -p duplication -- ./src --recursive` | JSON |
 | `fuzz` | Fuzzable | `cargo run -p fuzz-surface -- ./src --recursive` | JSON |
-| `quality` | Full audit | `cargo run -p quality-cli -- run . --format sarif` | SARIF |
+| `codemetrics` | Full audit | `cargo run -p codemetrics-cli -- run . --format sarif` | SARIF |
 
 ## CI/CD Integration
 
@@ -128,7 +128,7 @@ for tool in manual["tools"]:
 - name: Quality Audit
   run: |
     cargo build --release
-    quality run . --format sarif > results.sarif
+    codemetrics run . --format sarif > results.sarif
 - name: Upload SARIF
   uses: github/codeql-action/upload-sarif@v3
   with:

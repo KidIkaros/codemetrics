@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://quality-tools.dev/schemas/doccov-report.schema.json",
+  "$id": "https://codemetrics.dev/schemas/doccov-report.schema.json",
   "title": "DocReport",
   "description": "Documentation coverage report",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://quality-tools.dev/schemas/risk-report.schema.json",
+  "$id": "https://codemetrics.dev/schemas/risk-report.schema.json",
   "title": "RiskReport",
   "description": "Risk map report",
   "type": "object",

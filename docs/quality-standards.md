@@ -42,4 +42,4 @@ Every crate in this project:
 3. Must use its own tools to verify compliance
 4. Must document all public APIs with >95% coverage
 
-Run `quality run . --format sarif` to self-audit.
+Run `codemetrics run . --format sarif` to self-audit.

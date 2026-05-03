@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://quality-tools.dev/schemas/debt-report.schema.json",
+  "$id": "https://codemetrics.dev/schemas/debt-report.schema.json",
   "title": "DebtReport",
   "description": "Technical debt scan report",
   "type": "object",

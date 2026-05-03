@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://quality-tools.dev/schemas/tool-response.schema.json",
+  "$id": "https://codemetrics.dev/schemas/tool-response.schema.json",
   "title": "ToolResponse",
   "description": "Response from a quality tool execution",
   "type": "object",

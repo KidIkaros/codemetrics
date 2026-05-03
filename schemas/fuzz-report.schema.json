@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://quality-tools.dev/schemas/fuzz-report.schema.json",
+  "$id": "https://codemetrics.dev/schemas/fuzz-report.schema.json",
   "title": "FuzzReport",
   "description": "Fuzz surface analysis report",
   "type": "object",

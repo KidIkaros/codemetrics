@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://quality-tools.dev/schemas/coupling-report.schema.json",
+  "$id": "https://codemetrics.dev/schemas/coupling-report.schema.json",
   "title": "CouplingReport",
   "description": "Module coupling analysis report",
   "type": "object",

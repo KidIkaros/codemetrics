@@ -12,7 +12,7 @@ cargo build --workspace
 ### 2. Run Your First Audit
 ```bash
 # Analyze a Rust project
-./target/debug/quality run ./your-project
+./target/release/codemetrics run ./your-project
 
 # Or use individual tools
 ./target/debug/crap ./your-project/src --recursive
@@ -21,7 +21,7 @@ cargo build --workspace
 ```
 
 ### 3. Understand the Output
-The `quality run` command outputs:
+The `codemetrics run` command outputs:
 - **Table mode** (default): Human-readable summary
 - **JSON mode**: Machine-readable for CI (`--format json`)
 - **SARIF mode**: GitHub Security tab integration (`--format sarif`)
@@ -75,8 +75,8 @@ The `quality run` command outputs:
 
 1. Read [docs/user-guide.md](docs/user-guide.md) for detailed usage
 2. Read [docs/quality-standards.md](docs/quality-standards.md) for target metrics
-3. Run `quality run .` on this repo to see self-audit in action
-4. Set up pre-commit hooks: `quality install-hooks .`
+3. Run `codemetrics run .` on this repo to see self-audit in action
+4. Set up pre-commit hooks: `codemetrics install-hooks .`
 
 ## Need Help?
 

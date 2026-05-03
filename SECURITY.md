@@ -82,20 +82,20 @@ We regularly update dependencies to patch known vulnerabilities. You can help by
 ### CodeMetrics Security Model
 - CodeMetrics is a CLI tool that analyzes source code
 - It runs locally on the user's machine
-- It does not expose network services (except quality-server, which is optional)
+- It does not expose network services (except codemetrics-server, which is optional)
 - It reads source files and produces reports
 
 ### Potential Risks
 1. **Malicious Source Files**: Tree-sitter parsers are generally safe, but malformed input could cause issues
 2. **Path Traversal**: When processing user-specified paths
 3. **Resource Exhaustion**: Large codebases could cause high memory/CPU usage
-4. **quality-server**: The JSON-RPC server should not be exposed to untrusted networks
+4. **codemetrics-server**: The JSON-RPC server should not be exposed to untrusted networks
 
 ### Mitigations
 - We use memory monitoring to prevent OOM conditions
 - We limit rayon parallelism to prevent CPU exhaustion
 - We validate and canonicalize file paths
-- quality-server is designed for local/trusted network use only
+- codemetrics-server is designed for local/trusted network use only
 
 ## Contact
 For security-related questions or concerns, contact: kidikaros@proton.me

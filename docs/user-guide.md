@@ -13,7 +13,7 @@ This guide shows how to use CodeMetrics to audit and improve your project's code
 
 2. **Audit your project**:
    ```bash
-   quality run /path/to/your/project --format table
+   codemetrics run /path/to/your/project --format table
    ```
 
 3. **Interpret results**:
@@ -69,7 +69,7 @@ quality init .
 vim .quality.toml
 
 # Run full audit
-quality run . --format sarif --baseline .quality-baseline.sarif
+codemetrics run . --format sarif --baseline .quality-baseline.sarif
 ```
 
 ## CI Integration
@@ -78,7 +78,7 @@ Add to your GitHub Actions workflow:
 ```yaml
 - name: Quality Check
   run: |
-    quality run . --format sarif
+    codemetrics run . --format sarif
     # Fails if standards not met
 ```
 

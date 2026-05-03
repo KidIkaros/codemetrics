@@ -15,8 +15,8 @@ use codemetrics_common::{find_source_files, ToolResult};
 
 #[derive(Parser)]
 #[command(
-    name = "quality",
-    about = "Unified code quality checker for Rust. Headless-first, JSON output, CI-ready.",
+    name = "codemetrics",
+    about = "Unified code quality tool for Rust. Headless-first, JSON output, CI-ready.",
     version
 )]
 struct Cli {
@@ -26,7 +26,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run all quality checks and report results
+    /// Run all CodeMetrics checks and report results
     Check {
         /// Path to analyze
         path: String,
@@ -120,7 +120,7 @@ enum Commands {
         output: String,
     },
 
-    /// Run all quality tools in batch mode using .quality.toml config
+    /// Run all CodeMetrics tools in batch mode using .quality.toml config
     Run {
         /// Path to the crate root (directory with Cargo.toml)
         path: String,
@@ -142,7 +142,7 @@ enum Commands {
         no_fail_on_regression: bool,
     },
 
-    /// Record or display quality metrics history
+    /// Record or display CodeMetrics history
     History {
         /// Action: record (append current run to history) or show (print trend table)
         #[arg(default_value = "show")]
@@ -161,21 +161,21 @@ enum Commands {
         report: Option<String>,
     },
 
-    /// Install a quality pre-commit git hook
+    /// Install a CodeMetrics pre-commit git hook
     InstallHooks {
         /// Git repo root (default: current directory)
         #[arg(default_value = ".")]
         repo: String,
     },
 
-    /// Remove the quality pre-commit git hook
+    /// Remove the CodeMetrics pre-commit git hook
     UninstallHooks {
         /// Git repo root (default: current directory)
         #[arg(default_value = ".")]
         repo: String,
     },
 
-    /// Watch for file changes and re-run relevant quality checks
+    /// Watch for file changes and re-run relevant checks
     Watch {
         /// Path to watch
         #[arg(default_value = ".")]
@@ -190,7 +190,7 @@ enum Commands {
         debounce_ms: u64,
     },
 
-    /// Discover available quality tools and their capabilities
+    /// Discover available CodeMetrics tools and their capabilities
     Discover {
         /// Output format: json (default) or text
         #[arg(short, long, default_value = "json")]
@@ -672,7 +672,7 @@ fn output_json(report: &CheckReport) {
 
 fn output_text(report: &CheckReport) {
     println!(
-        "QUALITY CHECK: {}",
+        "CODEMETRICS CHECK: {}",
         if report.passed { "PASSED" } else { "FAILED" }
     );
     println!("Path: {}", report.path);
@@ -1363,7 +1363,7 @@ fn run_batch(
     match format {
         "sarif" => {
             // Build SARIF from results
-            let mut log = SarifLog::new("quality", env!("CARGO_PKG_VERSION"));
+            let mut log = SarifLog::new("codemetrics", env!("CARGO_PKG_VERSION"));
             let mut sarif_results: Vec<SarifResult> = Vec::new();
 
             for tool in &results {
@@ -1391,7 +1391,7 @@ fn run_batch(
             }
 
             let run = sarif_run(
-                "quality-batch",
+                "codemetrics-batch",
                 env!("CARGO_PKG_VERSION"),
                 sarif_results,
                 if failed > 0 { 1 } else { 0 },
@@ -1436,7 +1436,7 @@ fn run_batch(
         }
         _ => {
             println!("\n═══════════════════════════════════════════");
-            println!("  QUALITY BATCH REPORT");
+            println!("  CODEMETRICS BATCH REPORT");
             println!("  Run ID: (table mode)");
             println!("  Duration: {}ms", duration_ms);
             println!("═══════════════════════════════════════════");
@@ -1725,16 +1725,16 @@ fn install_hooks(repo: &str) -> i32 {
     }
 
     let hook_script = r#"#!/usr/bin/env bash
-# quality pre-commit hook -- installed by `quality install-hooks`
-# Remove with: quality uninstall-hooks
+# CodeMetrics pre-commit hook — installed by `codemetrics install-hooks`
+# Remove with: codemetrics uninstall-hooks
 set -euo pipefail
 
-if command -v quality &>/dev/null; then
-    quality run . --format table
-elif [ -f target/release/quality ]; then
-    ./target/release/quality run . --format table
+if command -v codemetrics &>/dev/null; then
+    codemetrics run . --format table
+elif [ -f target/release/codemetrics ]; then
+    ./target/release/codemetrics run . --format table
 else
-    echo "quality: binary not found, skipping pre-commit check" >&2
+    echo "codemetrics: binary not found, skipping pre-commit check" >&2
     exit 0
 fi
 "#;
@@ -1756,9 +1756,9 @@ fi
     }
 
     println!("Installed pre-commit hook at {}", hook_path);
-    println!("The hook will run `quality run .` before every commit.");
+    println!("The hook will run `codemetrics run .` before every commit.");
     println!("To bypass: git commit --no-verify");
-    println!("To remove: quality uninstall-hooks {}", repo);
+    println!("To remove: codemetrics uninstall-hooks {}", repo);
     0
 }
 
@@ -1771,9 +1771,9 @@ fn uninstall_hooks(repo: &str) -> i32 {
     }
 
     let content = std::fs::read_to_string(&hook_path).unwrap_or_default();
-    if !content.contains("quality pre-commit hook") {
+    if !content.contains("CodeMetrics pre-commit hook") {
         eprintln!(
-            "uninstall-hooks: {} exists but was not installed by quality -- refusing to remove",
+            "uninstall-hooks: {} exists but was not installed by codemetrics — refusing to remove",
             hook_path
         );
         return 1;
@@ -1802,7 +1802,7 @@ fn watch_mode(path: &str, checks: &str, debounce_ms: u64) -> i32 {
 
     let check_list: Vec<String> = checks.split(',').map(|s| s.trim().to_lowercase()).collect();
 
-    println!("quality watch: watching {} for .rs changes", path);
+    println!("codemetrics watch: watching {} for .rs changes", path);
     println!("  checks: {}", check_list.join(", "));
     println!("  debounce: {}ms", debounce_ms);
     println!("  Press Ctrl+C to stop.\n");

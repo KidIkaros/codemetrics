@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark quality-tools against a synthetic large repo."""
+"""Benchmark codemetrics against a synthetic large repo."""
 import os
 import sys
 import shutil
@@ -215,7 +215,7 @@ def benchmark():
         status = "OK" if rc == 0 else f"ERR({rc})"
         print(f"{bin_name:12s} {elapsed:10.3f} {status:>8s}")
 
-    # Benchmark quality run
+    # Benchmark codemetrics run
     binary = os.path.join(os.path.dirname(__file__), "..", "target", "release", "quality")
     elapsed, rc, err = run_tool(binary, ["run", "."], REPO_DIR)
     status = "OK" if rc == 0 else f"ERR({rc})"

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://quality-tools.dev/schemas/taint-report.schema.json",
+  "$id": "https://codemetrics.dev/schemas/taint-report.schema.json",
   "title": "TaintReport",
   "description": "Taint analysis report",
   "type": "object",

@@ -33,7 +33,7 @@ CARGO_TARGET_DIR=/tmp/CodeMetrics-build cargo build
 ./test.sh -p crap-metric
 
 # Standard cargo test (for single crate development)
-cargo test -p quality-common
+cargo test -p codemetrics-common
 ```
 
 ### Linting and Formatting
@@ -98,7 +98,7 @@ feat: add new complexity threshold option
 fix: correct false positive in coupling analysis
 docs: update README with new examples
 test: add integration tests for taint-scan
-refactor: simplify error handling in quality-cli
+refactor: simplify error handling in codemetrics-cli
 ```
 
 ## License

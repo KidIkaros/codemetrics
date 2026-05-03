@@ -8,9 +8,9 @@ This guide explains the project architecture, how to add new tools, and testing 
 CodeMetrics/
 ├── crates/
 │   ├── ast-parse-ts/      # Universal AST parsing (tree-sitter)
-│   ├── quality-common/     # Shared utilities (coverage, CRAP, file discovery)
-│   ├── quality-cli/        # Unified CLI (quality command)
-│   ├── quality-server/     # HTTP API server
+│   ├── codemetrics-common/     # Shared utilities (coverage, CRAP, file discovery)
+│   ├── codemetrics-cli/        # Unified CLI (codemetrics command)
+│   ├── codemetrics-server/     # HTTP API server
 │   ├── crap-metric/        # CRAP score calculator
 │   ├── debt-scan/          # Technical debt scanner
 │   ├── doc-coverage/       # Documentation coverage
@@ -33,13 +33,13 @@ CodeMetrics/
 - Supports 15 languages: Rust, Python, JS, TS, Go, C, C++, C#, Java, PHP, Ruby, Swift, Kotlin, Solidity, Vyper, OCaml
 - Exports: `parse_complexity_file()`, `parse_doc_coverage_file()`, `Language` enum
 
-### `quality-common`
+### `codemetrics-common`
 - Shared types: `ToolResult`, `UnifiedReport`, `CoverageRecord`
 - Utilities: `find_source_files()`, `crap_score()`, `crap_category()`
 - Memory monitoring: `MemoryMonitor` for CI environments
 
-### `quality-cli`
-- Unified binary (`quality`) that runs all tools in batch
+### `codemetrics-cli`
+- Unified binary (`codemetrics`) that runs all tools in batch
 - Subcommands: `check`, `run`, `history`, `init`, `install-hooks`
 - Outputs: table, JSON, SARIF, NDJSON
 
@@ -124,7 +124,7 @@ proptest! {
 The project uses GitHub Actions (`.github/workflows/quality.yml`):
 1. **Build**: Compile all tools in release mode
 2. **Test**: Run batched tests (`./test.sh`)
-3. **Audit**: Self-audit with `quality run .`, upload SARIF
+3. **Audit**: Self-audit with `codemetrics run .`, upload SARIF
 
 ## Quality Standards for Contributors
 
@@ -135,4 +135,4 @@ The project uses GitHub Actions (`.github/workflows/quality.yml`):
 - No code duplication >3 lines
 - Clippy warnings = 0
 
-Run `quality run .` before submitting PR.
+Run `codemetrics run .` before submitting PR.
