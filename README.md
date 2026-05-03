@@ -2,174 +2,122 @@
 
 <img src="logo.svg" alt="CodeMetrics Logo" width="400"/>
 
-[![Quality Audit](https://github.com/KidIkaros/codemetrics/actions/workflows/codemetrics.yml/badge.svg)](https://github.com/KidIkaros/codemetrics/actions)
+[![CodeMetrics CI](https://github.com/KidIkaros/codemetrics/actions/workflows/codemetrics.yml/badge.svg)](https://github.com/KidIkaros/codemetrics/actions)
 [![Docs](https://img.shields.io/badge/docs-available-brightgreen)](./docs/)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange)](https://rust-lang.org)
 [![License](https://img.shields.io/badge/License-Apache--2.0%20%7C%20OPL--1.1-blue)](LICENSE)
 
-**AI-native code quality audit toolkit** — 13 automated tools for multi-language analysis, CI/CD integration, and AI agent workflows.
+**AI-native code quality audit toolkit** — 10 automated analysis tools unified under one CLI, built for CI/CD pipelines and autonomous AI agent workflows.
 
-- **Zero config** — auto-detects 15 languages from source files
-- **CI-ready** — JSON/SARIF output with severity levels and fix suggestions
-- **Production-proven** — dogfooded on the CodeMetrics codebase itself
-- **No dependencies** — tree-sitter based, no compilation needed
+## Why This Exists
+
+Most quality tools are either:
+- **Batteries-included monoliths** (slow, all-or-nothing)
+- **Point solutions** (one tool per problem → 10 tools to manage)
+
+CodeMetrics gives you **best-of-both-worlds**: ten focused tools that compose, with structured output designed for machine consumption from day one.
+
+---
+
+## Highlights
+
+| | | |
+|---|---|---|
+| 🧠 **AI-Ready** | JSON/NDJSON output, Hermes Agent skill integration, deterministic exit codes |
+| ⚡ **Zero Config** | Auto-detects 15 languages, sensible defaults, no YAML required |
+| 🔒 **No External Services** | Pure local analysis — tree-sitter, no cloud API keys |
+| 🛡️ **Production Dogfood** | Runs on its own codebase at `github.com/KidIkaros/codemetrics` |
+| 📦 **Bootstrap Friendly** | Cargo install or build from source — no external dependencies beyond Rust |
+
+---
 
 ## Quick Install
 
 ```bash
-# From crates.io (once published)
-cargo install codemetrics-cli
-
-# Or build from source
+# From source (recommended — latest)
 git clone https://github.com/KidIkaros/codemetrics.git
-cd codemetrics && cargo build --release
+cd codemetrics
+cargo build --release
 ./target/release/codemetrics --help
+
+# Or install binary if/when published
+cargo install codemetrics-cli
 ```
 
 ## One-Minute Demo
 
 ```bash
-# Full audit (GitHub Security tab compatible)
+# Full security-audit style scan (SARIF for GitHub Security tab)
 codemetrics run . --format sarif > results.sarif
 
-# Single tool — CRAP risk scoring
+# Focus on maintainability risk
 codemetrics crap ./src --recursive
 
-# Mutation testing (Rust only)
-codemetrics mutate . -p my-crate --max-mutants 5
+# Measure test suite strength via mutation testing
+codemetrics mutate . --max-mutants 20
+
+# JSON output for AI agent consumption
+codemetrics run . --format json --output report.json
 ```
 
-## Tools at a Glance
+All tools accept `--format json` or `--format ndjson`; exit codes reflect pass/fail for CI gating.
 
-| Tool | Purpose | Primary Output |
-|------|---------|----------------|
-| `crap` | CRAP risk scores (CC × coverage) | risk score per function |
-| `mutate` | Mutation testing (surviving = weak tests) | mutation score % |
-| `debt` | TODO/FIXME/HACK/XXX markers | debt inventory by author |
-| `riskmap` | Churn × complexity hot spots | risk-ranked file list |
-| `doccov` | Public API doc coverage (%) | coverage % per module |
-| `taint` | Sensitive data flow tracing | taint path reports |
+---
+
+## The 10 Tools
+
+| Tool | What It Does | Output |
+|------|--------------|--------|
+| `crap` | CRAP (Change Risk Anti-Patterns) scoring — complexity × coverage | function-level risk scores |
+| `mutate` | Mutation testing — how many mutants do your tests catch? | mutation score % |
+| `debt` | TODO/FIXME/HACK/XXX debt inventory grouped by author | debt heatmap |
+| `riskmap` | Churn × complexity hot spots (high-risk files) | ranked file list |
+| `doccov` | Public API documentation coverage (%) | module coverage % |
+| `taint` | Sensitive data flow tracing (log leaks, secret exposure) | taint paths |
 | `fuzz` | Fuzzable function detection | fuzzability scores |
-| `coupling` | Module dependency analysis | coupling matrix |
-| `dupfind` | Code duplication detection | duplicate blocks |
-| `propcov` | Property test coverage | property coverage % |
-| `risk` *(batch)* | Combined risk scoring | aggregated severity |
+| `coupling` | Module dependency analysis (cycles, fan-in/out) | coupling matrix |
+| `dupfind` | Code duplication detection (AST-based) | duplicate blocks |
+| `propcov` | Property test coverage | coverage % |
 
-All tools support `--format json` and `--format ndjson` for AI agent pipelines.
+Run them individually or use `codemetrics run .` to execute the full battery.
 
-## Why CodeMetrics?
-
-| Problem | CodeMetrics Solution |
-|---------|---------------------|
-| Scattered quality tools | 1 unified binary (`codemetrics`) running 13 tools |
-| Language lock-in | 15 languages via tree-sitter (no compilation) |
-| CI noise | SARIF output integrates with GitHub Security tab |
-| AI agent blindness | Self-contained findings with `help`, `severity`, `rule_id` |
-
-## Multi-Language Support
-
-Analyzes **Rust, Python, JavaScript, TypeScript, Go, C, C++, C#, Java, PHP, Ruby, Swift, Kotlin, Solidity, Vyper, OCaml** directly from source files.
-
-| Language | Status | Tools |
-|----------|--------|-------|
-| Rust | ✅ Full — including mutation testing | 13 tools |
-| Python | ✅ Full | 13 tools |
-| JavaScript/TypeScript | ✅ Full | 13 tools |
-| Go | ✅ Full | 13 tools |
-| C/C++ | ✅ Full | 13 tools |
-| C# | ✅ Full | 13 tools |
-| Java | ✅ Full | 13 tools |
-| PHP | ✅ Full | 13 tools |
-| Ruby | ✅ Full | 13 tools |
-| Swift | ✅ Full | 13 tools |
-| Kotlin | ✅ Full | 13 tools |
-| Solidity | ✅ Implemented | 10 tools (taint disabled) |
-| Vyper | ⚠️ Partial (parser limited) | 8 tools |
-| OCaml | ✅ Implemented | 13 tools |
-
-## GitHub Actions Integration
-
-```yaml
-name: Code Quality
-on: [push, pull_request]
-
-jobs:
-  codemetrics:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install CodeMetrics
-        run: cargo install codemetrics-cli
-      - name: Run audit
-        run: codemetrics run . --format sarif > results.sarif
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: results.sarif
-```
+---
 
 ## AI Agent Integration
 
-```bash
-# Discover all tools, schemas, rule IDs
-codemetrics discover --format json
+CodeMetrics ships with **first-class AI agent support** — skills for Hermes Agent are bundled directly in this repo under `hermes/`.
 
-# NDJSON stream for incremental processing
-codemetrics run . --format ndjson | jq -c 'select(.severity=="high")'
+Agents can invoke tools autonomously, parse structured JSON results, and act on risk thresholds without human intervention.
 
-# Record history for trend analysis
-codemetrics run . --format json | codemetrics history record --report /dev/stdin
-```
+See [`hermes/README.md`](hermes/README.md) for the full skill catalog.
 
-## Hermes Agent Skills
+---
 
-Hermes agents can load CodeMetrics skills directly:
+## Use Cases
 
-```bash
-skill: load(name="codemetrics-analyzer")   # multi-language orchestration
-skill: load(name="codemetrics-explore")    # tool discovery & usage
-skill: load(name="codemetrics-workspace")  # workspace patterns
-```
+- **Pre-commit Quality Gate** — fail PRs if CRAP > 30 or mutation score < 70%
+- **Refactoring Prioritization** — `riskmap` identifies the most dangerous files
+- **Security Audit** — `taint` traces sensitive data paths across languages
+- **Documentation Gaps** — `doccov` highlights undocumented public APIs
+- **Test Strength** — `mutate` quantifies suite weakness beyond coverage %
 
-Skills are organized under `hermes/devops/` and `hermes/software-development/`:
+---
 
-| Skill | Purpose |
-|-------|---------|
-| **codemetrics-analyzer** | Multi-language orchestration patterns for batch audits across polyglot repos |
-| **codemetrics-explore** | CLI discovery, individual tool usage, JSON/NDJSON output parsing |
-| **codemetrics-http-debug-patterns** | Debugging `codemetrics-server` API responses and HTTP error patterns |
-| **codemetrics-observability-and-ops** | CI/CD integration, metrics collection, health checks, alerting |
-| **codemetrics-performance-optimization** | Tuning parser pools, parallelism bounds, memory limits |
-| **rust-codemetrics-analysis** | Rust-specific CRAP/debt/doccov/mutation workflows |
-| **agent-quality-workflow** | End-to-end detect→fix→verify loop for autonomous agents |
-| **codemetrics-workspace** | Building and maintaining a multi-crate Rust workspace of quality tools |
+## Project Status
 
-## Documentation
+Current state: **Stable v1.0.0** (public GitHub)
 
-- [User Guide](./docs/user-guide.md) — How to use CodeMetrics to audit and improve your project
-- [Developer Guide](./docs/developer-guide.md) — Architecture, adding new tools, testing patterns
-- [Metrics Explained](./docs/metrics-explained.md) — Detailed metric definitions and fix strategies
-- [Quality Standards](./docs/codemetrics-standards.md) — Thresholds and gating criteria
-- [UTCP Integration](./docs/utcp-integration.md) — Universal Tool Context Protocol for AI agents
+- ✅ All 10 tools green in CI
+- ✅ JSON/SARIF output validated against schemas in `schemas/`
+- ✅ Hermes Agent skills exported for AI-native workflows
+- 📦 License: Apache-2.0 for core, OPL-1.1 for extensions
 
-## Crate Reference
+See [`PROJECT_STATUS.md`](PROJECT_STATUS.md) for roadmap and known limitations.
 
-| Crate | Type | Purpose |
-|-------|------|---------|
-| `codemetrics-cli` | Binary | Main CLI (`codemetrics` command) |
-| `codemetrics-common` | Library | Shared utilities (coverage, CRAP, file discovery) |
-| `codemetrics-server` | Binary | HTTP JSON-RPC API server |
-| `crap-metric` | Binary | CRAP scoring |
-| `mutation-test` | Binary | Mutation testing (Rust only) |
-| `debt-scan` | Binary | Technical debt scanner |
-| `doc-coverage` | Binary | Documentation coverage |
-| `duplication` | Binary | Code duplication detection |
-| `coupling` | Binary | Module coupling analysis |
-| `risk-map` | Binary | Churn × complexity analysis |
-| `taint-scan` | Binary | Taint analysis (sensitive data flow) |
-| `fuzz-surface` | Binary | Fuzzable function detection |
-| `prop-cov` | Binary | Property coverage analysis |
+---
 
-## License
+## Getting Help
 
-Apache-2.0 OR OPL-1.1 — choose whichever suits your project.
+- 📚 [Documentation](./docs/) — user guide, developer guide, integration patterns
+- 🐛 [Issues](https://github.com/KidIkaros/codemetrics/issues) — bug reports, feature requests
+- 💬 [Discussions](https://github.com/KidIkaros/codemetrics/discussions) — questions, show-and-tell

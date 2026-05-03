@@ -149,7 +149,7 @@ enum Commands {
         action: String,
 
         /// History directory (default: .quality-history)
-        #[arg(long, default_value = ".quality-history")]
+        #[arg(long, default_value = ".codemetrics-history")]
         dir: String,
 
         /// Number of recent runs to show

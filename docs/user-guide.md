@@ -69,7 +69,7 @@ quality init .
 vim .quality.toml
 
 # Run full audit
-codemetrics run . --format sarif --baseline .quality-baseline.sarif
+codemetrics run . --format sarif --baseline .codemetrics-baseline.sarif
 ```
 
 ## CI Integration
