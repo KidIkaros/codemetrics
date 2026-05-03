@@ -211,7 +211,7 @@ fn output_table(reports: &[FunctionReport]) {
         Column::right("COMP", 4),
         Column::right("LINES", 10),
         Column::right("CRAP", 10),
-        Column::left("CATEGORY", 12),
+        Column::left("CATEGORY", 15),
         Column::left("HINT", 40),
     ];
     print_table_header(&columns);
