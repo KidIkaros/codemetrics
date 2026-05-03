@@ -1,21 +1,40 @@
-[package]
-name = "prop-cov"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "Scan for property-based test macros and calculate coverage metrics"
-
 [[bin]]
 name = "propcov"
 path = "src/main.rs"
 
+[package]
+name = "prop-cov"
+description = "Scan for property-based test macros and calculate coverage metrics"
+
 [dependencies]
-codemetrics-common = { path = "../codemetrics-common" }
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ast-parse-ts = { path = "../ast-parse-ts" }
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[package.repository]
+workspace = true
+
+[dependencies.codemetrics-common]
+path = "../codemetrics-common"
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]
+
+[dependencies.ast-parse-ts]
+path = "../ast-parse-ts"

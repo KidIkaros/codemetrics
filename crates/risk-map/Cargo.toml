@@ -1,21 +1,40 @@
-[package]
-name = "risk-map"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "Risk map -- cross-reference git churn with code complexity to find the danger zone"
-
 [[bin]]
 name = "riskmap"
 path = "src/main.rs"
 
+[package]
+name = "risk-map"
+description = "Risk map -- cross-reference git churn with code complexity to find the danger zone"
+
 [dependencies]
-ast-parse-ts = { path = "../ast-parse-ts" }
-codemetrics-common = { path = "../codemetrics-common" }
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[package.repository]
+workspace = true
+
+[dependencies.ast-parse-ts]
+path = "../ast-parse-ts"
+
+[dependencies.codemetrics-common]
+path = "../codemetrics-common"
+
+[dependencies.clap]
+version = "4"
+features = [ "derive",]
+
+[dependencies.serde]
+version = "1"
+features = [ "derive",]

@@ -108,7 +108,7 @@ cargo install codemetrics-cli
 
 CodeMetrics ships with **Hermes Agent skill definitions** under `hermes/`. Each skill wraps a tool, parses structured results, and exposes thresholds for autonomous operation.
 
-See [`hermes/README.md`](hermes/README.md) for the skill catalog and usage patterns.
+See [`docs/agents/AGENTS.md`](docs/agents/AGENTS.md) for the skill catalog and usage patterns.
 
 ---
 

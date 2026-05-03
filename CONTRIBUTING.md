@@ -51,7 +51,7 @@ cargo clippy -- -D warnings
 ## How to Contribute
 
 ### Reporting Bugs
-- Use the [GitHub Issues](https://github.com/your-repo/CodeMetrics/issues) tracker
+- Use the [GitHub Issues](https://github.com/KidIkaros/codemetrics/issues) tracker
 - Include steps to reproduce, expected behavior, and actual behavior
 - Mention your OS, Rust version, and CodeMetrics version
 

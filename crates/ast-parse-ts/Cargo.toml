@@ -1,8 +1,5 @@
 [package]
 name = "ast-parse-ts"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
 description = "Universal AST parsing via tree-sitter — complexity, doc coverage, identifiers for Rust/Python/JS/TS/Go"
 
 [lib]
@@ -28,3 +25,15 @@ tree-sitter-solidity = "1.2"
 tree-sitter-ocaml = "0.24"
 
 [dev-dependencies]
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[package.repository]
+workspace = true

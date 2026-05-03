@@ -100,4 +100,4 @@ We regularly update dependencies to patch known vulnerabilities. You can help by
 ## Contact
 For security-related questions or concerns, contact: kidikaros@proton.me
 
-For general questions, please use [GitHub Issues](https://github.com/your-repo/CodeMetrics/issues).
+For general questions, please use [GitHub Issues](https://github.com/KidIkaros/codemetrics/issues).

@@ -1,7 +1,12 @@
 [package]
 name = "codemetrics-server"
-version = "0.1.0"
+version = { workspace = true }
 edition = "2021"
+description = "UTCP/MCP server bridge for CodeMetrics — exposes tools as model-context-protocol resources"
+license = { workspace = true }
+repository = { workspace = true }
+keywords = { workspace = true }
+categories = { workspace = true }
 
 [dependencies]
 codemetrics-common = { path = "../codemetrics-common" }
