@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 use clap::{Parser, Subcommand};
+use colored::Colorize;
 use serde::Serialize;
 use std::time::Instant;
 
@@ -55,10 +56,41 @@ enum Commands {
         #[arg(long, default_value = "100")]
         max_debt: usize,
 
-        /// Skip specific checks (comma-separated: crap,debt,doc,dup,complexity)
+        /// Max number of functions with complexity >= 10 allowed before failing (default: 0 = strict)
+        #[arg(long, default_value = "0")]
+        max_complexity_violations: usize,
+
+        /// Max taint violations (default: 0)
+        #[arg(long, default_value = "0")]
+        max_taint: usize,
+
+        /// Max code duplication percentage (default: 5.0)
+        #[arg(long, default_value = "5.0")]
+        max_duplication: f64,
+
+        /// Max allowed file risk score (default: 10.0)
+        #[arg(long, default_value = "10.0")]
+        max_risk: f64,
+
+        /// Max allowed architectural coupling issues (default: 5)
+        #[arg(long, default_value = "5")]
+        max_coupling: usize,
+
+        /// Min property test coverage percentage (default: 0.0)
+        #[arg(long, default_value = "0.0")]
+        min_propcov: f64,
+
+        /// Max unprotected fuzzable endpoints (default: 0)
+        #[arg(long, default_value = "0")]
+        max_fuzz_risk: usize,
+
+        /// Skip specific checks (comma-separated: crap,debt,doc,dup,complexity,taint,risk,coupling,propcov,fuzz)
         #[arg(long)]
         skip: Option<String>,
     },
+
+    /// Verify environment dependencies (doctor)
+    Setup,
 
     /// CRAP metric only
     Crap {
@@ -287,7 +319,11 @@ fn check_crap(
     coverage_path: &Option<String>,
     max_crap: f64,
 ) -> CheckResult {
-    let coverage_data: Option<Vec<CoverageRecord>> = coverage_path.as_ref().map(|p| parse_lcov(p));
+    let coverage_data: Option<Vec<CoverageRecord>> = coverage_path
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|c| parse_lcov(&c));
+
     let (total, functions) = scan_source_functions(path, recursive, |func| {
         let cov_pct = if let Some(ref cov_data) = coverage_data {
             function_coverage(cov_data, &func.name)
@@ -579,7 +615,12 @@ fn check_doc_coverage(path: &str, recursive: bool, min_doc: f64) -> CheckResult 
     }
 }
 
-fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckResult {
+fn check_complexity(
+    path: &str,
+    recursive: bool,
+    min_complexity: u32,
+    max_violations: usize,
+) -> CheckResult {
     let all_exts = [
         "rs", "py", "pyi", "js", "mjs", "cjs", "ts", "tsx", "mts", "go", "c", "h", "cpp", "cc",
         "cxx", "hpp", "cs", "java", "php", "rb", "swift",
@@ -611,11 +652,22 @@ fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckRe
     let mut langs_vec: Vec<String> = langs_seen.into_iter().collect();
     langs_vec.sort();
 
-    let (severity, rule_id, help) = if complex_funcs.is_empty() {
+    let passed = complex_funcs.len() <= max_violations;
+
+    let (severity, rule_id, help) = if passed && complex_funcs.is_empty() {
         (
             "info".to_string(),
             "complexity-pass".to_string(),
             "No functions with excessive complexity.".to_string(),
+        )
+    } else if passed {
+        (
+            "info".to_string(),
+            "complexity-pass".to_string(),
+            format!(
+                "Complexity violations within allowed limit (<= {}).",
+                max_violations
+            ),
         )
     } else if complex_funcs.len() > 10 {
         (
@@ -634,25 +686,34 @@ fn check_complexity(path: &str, recursive: bool, min_complexity: u32) -> CheckRe
 
     CheckResult {
         name: "complexity".to_string(),
-        passed: complex_funcs.is_empty(),
+        passed,
         score: Some(complex_funcs.len() as f64),
-        threshold: Some(0.0),
-        message: if complex_funcs.is_empty() {
+        threshold: Some(max_violations as f64),
+        message: if passed && complex_funcs.is_empty() {
             format!(
                 "No functions above complexity threshold (languages: {})",
                 langs_vec.join(", ")
             )
+        } else if passed {
+            format!(
+                "{} complex functions <= allowed {} (languages: {})",
+                complex_funcs.len(),
+                max_violations,
+                langs_vec.join(", ")
+            )
         } else {
             format!(
-                "{} functions with complexity >= {} (languages: {})",
+                "{} functions with complexity >= {} > allowed {} (languages: {})",
                 complex_funcs.len(),
                 min_complexity,
+                max_violations,
                 langs_vec.join(", ")
             )
         },
         details: serde_json::json!({
             "total_functions": total,
             "complex_count": complex_funcs.len(),
+            "max_violations_allowed": max_violations,
             "languages": langs_vec,
             "functions": complex_funcs.iter().take(10).collect::<Vec<_>>(),
         }),
@@ -671,32 +732,41 @@ fn output_json(report: &CheckReport) {
 }
 
 fn output_text(report: &CheckReport) {
-    println!(
-        "CODEMETRICS CHECK: {}",
-        if report.passed { "PASSED" } else { "FAILED" }
-    );
-    println!("Path: {}", report.path);
-    println!("{}", "─".repeat(60));
+    let ascii_art = r#"
+   ____          _      __  __      _        _          
+  / ___|___   __| | ___|  \/  | ___| |_ _ __(_) ___ ___ 
+ | |   / _ \ / _` |/ _ \ |\/| |/ _ \ __| '__| |/ __/ __|
+ | |__| (_) | (_| |  __/ |  | |  __/ |_| |  | | (__\__ \
+  \____\___/ \__,_|\___|_|  |_|\___|\__|_|  |_|\___|___/
+"#;
+    println!("{}", ascii_art.cyan().bold());
+
+    let header = if report.passed { "PASSED".bold().green() } else { "FAILED".bold().red() };
+    println!("CODEMETRICS CHECK: {}", header);
+    println!("Path: {}", report.path.cyan());
+    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
 
     for check in &report.checks {
-        let icon = if check.passed { "✓" } else { "✗" };
+        let icon = if check.passed { "✓".green().bold() } else { "✗".red().bold() };
         let score_str = check.score.map(|s| format!("{:.1}", s)).unwrap_or_default();
         let thresh_str = check
             .threshold
             .map(|t| format!("{:.0}", t))
             .unwrap_or_default();
 
+        let msg = if check.passed { check.message.normal() } else { check.message.red() };
+
         println!(
             "  {} {:<15} {:>8} (threshold: {}) — {}",
-            icon, check.name, score_str, thresh_str, check.message
+            icon, check.name.bold(), score_str, thresh_str, msg
         );
     }
 
-    println!("{}", "─".repeat(60));
-    println!(
-        "  Checks: {}/{} passed",
-        report.summary.passed_checks, report.summary.total_checks
-    );
+    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+    let checks_str = format!("{}/{} passed", report.summary.passed_checks, report.summary.total_checks);
+    let checks_disp = if report.passed { checks_str.green() } else { checks_str.red() };
+    
+    println!("  Checks: {}", checks_disp);
     println!("  Functions: {}", report.summary.functions_analyzed);
     println!("  Avg complexity: {:.1}", report.summary.avg_complexity);
     println!("  Avg CRAP: {:.1}", report.summary.avg_crap);
@@ -962,6 +1032,13 @@ fn main() {
             max_crap,
             min_doc,
             max_debt,
+            max_complexity_violations,
+            max_taint,
+            max_duplication,
+            max_risk,
+            max_coupling,
+            min_propcov,
+            max_fuzz_risk,
             skip,
         } => {
             let skip_list: Vec<String> = skip
@@ -982,7 +1059,26 @@ fn main() {
                 checks.push(check_doc_coverage(&path, recursive, min_doc));
             }
             if should_run("complexity") {
-                checks.push(check_complexity(&path, recursive, 10));
+                checks.push(check_complexity(&path, recursive, 10, max_complexity_violations));
+            }
+
+            if should_run("taint") {
+                checks.push(check_taint(&path, recursive, max_taint));
+            }
+            if should_run("dup") || should_run("dupfind") || should_run("duplication") {
+                checks.push(check_dupfind(&path, recursive, max_duplication));
+            }
+            if should_run("risk") || should_run("riskmap") {
+                checks.push(check_riskmap(&path, recursive, max_risk));
+            }
+            if should_run("coupling") {
+                checks.push(check_coupling(&path, max_coupling));
+            }
+            if should_run("propcov") {
+                checks.push(check_propcov(&path, recursive, min_propcov));
+            }
+            if should_run("fuzz") {
+                checks.push(check_fuzz(&path, recursive, max_fuzz_risk));
             }
 
             let passed = checks.iter().all(|c| c.passed);
@@ -994,13 +1090,14 @@ fn main() {
 
             let passed_count = checks.iter().filter(|c| c.passed).count();
             let failed_count = checks.len() - passed_count;
+            let total_checks = checks.len();
 
             let report = CheckReport {
                 passed,
                 path: path.clone(),
                 checks,
                 summary: CheckSummary {
-                    total_checks: 4,
+                    total_checks,
                     passed_checks: passed_count,
                     failed_checks: failed_count,
                     functions_analyzed: total_funcs,
@@ -1089,7 +1186,7 @@ fn main() {
             min_complexity,
             format,
         } => {
-            let result = check_complexity(&path, recursive, min_complexity);
+            let result = check_complexity(&path, recursive, min_complexity, 0);
             let passed = result.passed;
             match format.as_str() {
                 "text" => println!("{}", result.message),
@@ -1100,6 +1197,11 @@ fn main() {
             } else {
                 1
             }
+        }
+
+        Commands::Setup => {
+            setup_command();
+            0
         }
 
         Commands::Init { output } => {
@@ -1295,7 +1397,7 @@ fn run_batch(
     // Previous concurrent execution (MAX_CONCURRENT=4) caused OOM crashes on 16GB/32GB systems
     let mut results: Vec<ToolResult> = Vec::new();
     for (crate_name, bin_name, args) in &tools {
-        eprintln!("Running tool: {}", bin_name);
+        eprintln!("{} {}", "Running tool:".cyan(), bin_name.bold());
 
         // Check memory before starting tool
         if let Err(usage) = memory_monitor.check() {
@@ -1322,7 +1424,7 @@ fn run_batch(
             break;
         }
 
-        eprintln!("✓ Completed: {} ({} ms)", bin_name, duration_ms);
+        eprintln!("{} {} ({} ms)", "✓ Completed:".green().bold(), bin_name.bold(), duration_ms);
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
@@ -1877,7 +1979,7 @@ fn run_watch_checks(path: &str, check_list: &[String]) {
         results.push(("crap", r.passed, r.message));
     }
     if should("complexity") {
-        let r = check_complexity(path, true, 10);
+        let r = check_complexity(path, true, 10, 0);
         results.push(("complexity", r.passed, r.message));
     }
 
@@ -1895,4 +1997,189 @@ fn run_watch_checks(path: &str, check_list: &[String]) {
             eprintln!("  [{}] {}", name, msg);
         }
     }
+}
+
+// ═══════════════════════════════════════════
+// NEW 6 CHECK WRAPPERS & SETUP
+// ═══════════════════════════════════════════
+
+fn check_taint(path: &str, recursive: bool, max_taint: usize) -> CheckResult {
+    let mut args = vec![path, "--format", "json"];
+    if recursive { args.push("--recursive"); }
+    let res = run_tool("taint-scan", "taint", &args, Instant::now());
+    let violations = res.data.get("summary").and_then(|s| s.get("violations_count")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let passed = violations <= max_taint;
+    CheckResult {
+        name: "taint".into(),
+        passed,
+        score: Some(violations as f64),
+        threshold: Some(max_taint as f64),
+        message: if passed { format!("{} taint violations <= {}", violations, max_taint) } else { format!("{} taint violations > allowed {}", violations, max_taint) },
+        details: res.data.clone(),
+        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        help: None,
+        rule_id: Some("taint_limit".into()),
+    }
+}
+
+fn check_dupfind(path: &str, recursive: bool, max_duplication: f64) -> CheckResult {
+    let mut args = vec![path, "--format", "json"];
+    if recursive { args.push("--recursive"); }
+    let res = run_tool("duplication", "dupfind", &args, Instant::now());
+    let groups = res.data.get("summary").and_then(|s| s.get("total_groups")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let passed = groups <= max_duplication;
+    CheckResult {
+        name: "duplication".into(),
+        passed,
+        score: Some(groups),
+        threshold: Some(max_duplication),
+        message: if passed { format!("{} duplicated groups <= {}", groups, max_duplication) } else { format!("{} duplicated groups > allowed {}", groups, max_duplication) },
+        details: res.data.clone(),
+        severity: if passed { Some("info".into()) } else { Some("medium".into()) },
+        help: None,
+        rule_id: Some("duplication_limit".into()),
+    }
+}
+
+fn check_riskmap(path: &str, _recursive: bool, max_risk: f64) -> CheckResult {
+    let args = vec![path, "--format", "json"];
+    // riskmap doesn't use recursive flag, it always scans dir
+    let res = run_tool("risk-map", "riskmap", &args, Instant::now());
+    let max_found_risk = res.data.get("files").and_then(|a| a.as_array())
+        .map(|arr| arr.iter().filter_map(|f| f.get("risk_score").and_then(|v| v.as_f64())).fold(0.0f64, f64::max))
+        .unwrap_or(0.0);
+    let passed = max_found_risk <= max_risk;
+    CheckResult {
+        name: "riskmap".into(),
+        passed,
+        score: Some(max_found_risk),
+        threshold: Some(max_risk),
+        message: if passed { format!("Max risk score {:.1} <= {:.1}", max_found_risk, max_risk) } else { format!("Max risk score {:.1} > allowed {:.1}", max_found_risk, max_risk) },
+        details: res.data.clone(),
+        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        help: None,
+        rule_id: Some("riskmap_limit".into()),
+    }
+}
+
+fn check_coupling(path: &str, max_coupling: usize) -> CheckResult {
+    let args = vec![path, "--format", "json"];
+    let res = run_tool("coupling", "coupling", &args, Instant::now());
+    let avg_fan_out = res.data.get("summary").and_then(|s| s.get("avg_fan_out")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let passed = avg_fan_out <= max_coupling as f64;
+    CheckResult {
+        name: "coupling".into(),
+        passed,
+        score: Some(avg_fan_out),
+        threshold: Some(max_coupling as f64),
+        message: if passed { format!("Avg fan-out {:.1} <= {}", avg_fan_out, max_coupling) } else { format!("Avg fan-out {:.1} > allowed {}", avg_fan_out, max_coupling) },
+        details: res.data.clone(),
+        severity: if passed { Some("info".into()) } else { Some("medium".into()) },
+        help: None,
+        rule_id: Some("coupling_limit".into()),
+    }
+}
+
+fn check_propcov(path: &str, recursive: bool, min_propcov: f64) -> CheckResult {
+    let mut args = vec![path, "--format", "json"];
+    if recursive { args.push("--recursive"); }
+    let res = run_tool("prop-cov", "propcov", &args, Instant::now());
+    let coverage = res.data.get("summary").and_then(|s| s.get("coverage_percentage")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let passed = coverage >= min_propcov;
+    CheckResult {
+        name: "propcov".into(),
+        passed,
+        score: Some(coverage),
+        threshold: Some(min_propcov),
+        message: if passed { format!("PropCov {:.1}% >= {:.1}%", coverage, min_propcov) } else { format!("PropCov {:.1}% < required {:.1}%", coverage, min_propcov) },
+        details: res.data.clone(),
+        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        help: None,
+        rule_id: Some("propcov_limit".into()),
+    }
+}
+
+fn check_fuzz(path: &str, recursive: bool, max_fuzz_risk: usize) -> CheckResult {
+    let mut args = vec![path, "--format", "json"];
+    if recursive { args.push("--recursive"); }
+    let res = run_tool("fuzz-surface", "fuzz", &args, Instant::now());
+    let fuzzable = res.data.get("summary").and_then(|s| s.get("fuzzable_functions")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let passed = fuzzable <= max_fuzz_risk;
+    CheckResult {
+        name: "fuzz".into(),
+        passed,
+        score: Some(fuzzable as f64),
+        threshold: Some(max_fuzz_risk as f64),
+        message: if passed { format!("{} fuzzable endpoints <= {}", fuzzable, max_fuzz_risk) } else { format!("{} fuzzable endpoints > allowed {}", fuzzable, max_fuzz_risk) },
+        details: res.data.clone(),
+        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        help: None,
+        rule_id: Some("fuzz_limit".into()),
+    }
+}
+
+fn setup_command() {
+    let ascii_art = r#"
+   ____          _      __  __      _        _          
+  / ___|___   __| | ___|  \/  | ___| |_ _ __(_) ___ ___ 
+ | |   / _ \ / _` |/ _ \ |\/| |/ _ \ __| '__| |/ __/ __|
+ | |__| (_) | (_| |  __/ |  | |  __/ |_| |  | | (__\__ \
+  \____\___/ \__,_|\___|_|  |_|\___|\__|_|  |_|\___|___/
+"#;
+    println!("{}", ascii_art.cyan().bold());
+    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+    println!("{}", "  CodeMetrics Doctor & Setup".cyan().bold());
+    println!("{}\n", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+
+    let mut all_passed = true;
+
+    // Check cargo
+    if std::process::Command::new("cargo").arg("--version").output().is_ok() {
+        println!("  {} cargo installed", "[✓]".green().bold());
+    } else {
+        println!("  {} cargo NOT installed", "[✗]".red().bold());
+        println!("      => {}", "Install Rust: https://rustup.rs/".yellow());
+        all_passed = false;
+    }
+
+    // Check cargo-llvm-cov
+    if std::process::Command::new("cargo").args(["llvm-cov", "--version"]).output().is_ok() {
+        println!("  {} cargo-llvm-cov installed", "[✓]".green().bold());
+    } else {
+        println!("  {} cargo-llvm-cov NOT installed", "[✗]".red().bold());
+        println!("      => {}", "Run: cargo install cargo-llvm-cov".yellow());
+        all_passed = false;
+    }
+
+    // Check llvm-tools-preview
+    let rustup_out = std::process::Command::new("rustup").args(["component", "list"]).output().ok();
+    if let Some(out) = rustup_out {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if stdout.contains("llvm-tools-preview (installed)") || stdout.contains("llvm-tools (installed)") {
+            println!("  {} llvm-tools installed", "[✓]".green().bold());
+        } else {
+            println!("  {} llvm-tools NOT installed", "[✗]".red().bold());
+            println!("      => {}", "Run: rustup component add llvm-tools-preview".yellow());
+            all_passed = false;
+        }
+    } else {
+        println!("  {} rustup not found, could not verify llvm-tools", "[?]".yellow().bold());
+    }
+
+    // Check .quality.toml
+    if std::path::Path::new(".quality.toml").exists() {
+        println!("  {} .quality.toml configuration found", "[✓]".green().bold());
+    } else {
+        println!("  {} .quality.toml NOT found", "[✗]".red().bold());
+        println!("      => {}", "Run: codemetrics init".yellow());
+        all_passed = false;
+    }
+
+    println!("\n{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+    if all_passed {
+        println!("  {}", "Everything looks good! Your codebase is ready.".green().bold());
+    } else {
+        println!("  {}", "Please resolve the missing requirements above.".red().bold());
+    }
+    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
 }

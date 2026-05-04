@@ -8,6 +8,7 @@ description = "Unified headless CLI for codemetrics -- one command, JSON output,
 
 [dependencies]
 serde_json = "1"
+colored = "2"
 
 [package.version]
 workspace = true
@@ -21,10 +22,18 @@ workspace = true
 [package.license]
 workspace = true
 
+[package.categories]
+workspace = true
+
+[package.keywords]
+workspace = true
+
 [dependencies.ast-parse-ts]
+path = "../ast-parse-ts"
 version = "1.0.0"
 
 [dependencies.codemetrics-common]
+path = "../codemetrics-common"
 version = "1.0.0"
 
 [dependencies.clap]

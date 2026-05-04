@@ -205,7 +205,7 @@ fn analyze_rust_file(
     let mut fn_sig = String::new();
     let mut fn_start_line = 0;
     let mut brace_depth = 0;
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -260,7 +260,7 @@ fn analyze_python_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut fn_sig = String::new();
     let mut fn_start_line = 0;
     let mut indent_level = 0;
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -314,7 +314,7 @@ fn analyze_python_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 
 fn analyze_js_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -341,7 +341,7 @@ fn analyze_js_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 
 fn analyze_go_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -364,7 +364,7 @@ fn analyze_go_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 // C/C++ function analysis (simplified)
 fn analyze_c_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -410,7 +410,7 @@ fn analyze_c_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 // C# function analysis (simplified)
 fn analyze_csharp_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -461,7 +461,7 @@ fn analyze_csharp_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 // Java function analysis (simplified)
 fn analyze_java_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -512,7 +512,7 @@ fn analyze_java_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 // PHP function analysis (simplified)
 fn analyze_php_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -549,7 +549,7 @@ fn analyze_php_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 // Ruby function analysis (simplified)
 fn analyze_ruby_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -589,7 +589,7 @@ fn analyze_ruby_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 // Swift function analysis (simplified)
 fn analyze_swift_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -626,7 +626,7 @@ fn analyze_swift_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 // Kotlin function analysis (simplified)
 fn analyze_kotlin_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -665,7 +665,7 @@ fn analyze_kotlin_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
 // Solidity function analysis (simplified)
 fn analyze_solidity_file(source: &str, file: &str) -> Vec<FuzzableFunction> {
     let mut functions = Vec::new();
-    let mut line_num = 0;
+    let _line_num = 0;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -886,7 +886,7 @@ fn parse_js_fn_sig(sig: &str, file: &str, line: usize) -> Option<FuzzableFunctio
     let name = if let Some(after_func) = sig.strip_prefix("function ") {
         let name_end = after_func.find('(')?;
         after_func[..name_end].trim().to_string()
-    } else if (sig.starts_with("const ") || sig.starts_with("let ")) {
+    } else if sig.starts_with("const ") || sig.starts_with("let ") {
         // Handle arrow functions: const foo = (a, b) => {}
         let after_kw = sig.split_whitespace().nth(1)?;
         let name_part = after_kw.split('=').next()?.trim();
@@ -1139,20 +1139,6 @@ fn get_fuzz_hint(f: &FuzzableFunction) -> String {
     }
 }
 
-fn find_rs_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
-                files.push(path);
-            } else if recursive && path.is_dir() {
-                files.extend(find_rs_files(&path, recursive));
-            }
-        }
-    }
-    files
-}
 
 fn output_table(display: &[FuzzableFunction], all: &[FuzzableFunction]) {
     println!("FUZZING SURFACE ANALYSIS");

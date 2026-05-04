@@ -924,6 +924,46 @@ pub struct CoverageRecord {
 
 /// Parse an LCOV file into coverage records per function.
 /// Lines look like: `FN:<line>,<name>` followed by `FNDA:<hits>,<name>`.
+/// Attempt to extract a human-readable function name from a Rust v0 mangled symbol.
+/// For `_RNvCsXXX_4crate17my_function_name` this returns `"my_function_name"`.
+/// Falls back to returning the original symbol unchanged for non-mangled names.
+fn demangle_rust_v0(sym: &str) -> String {
+    // Only attempt demangling for Rust v0 mangled symbols
+    if !sym.starts_with("_R") {
+        return sym.to_string();
+    }
+    // Identifiers in the v0 scheme are encoded as <decimal-length><name>.
+    // Walk the symbol and find every run of digits followed by ASCII identifier chars.
+    // The last such run is the most-specific name (the function itself).
+    let bytes = sym.as_bytes();
+    let mut last_ident: Option<&str> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            // Read the length prefix
+            let len_start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if let Ok(len_str) = std::str::from_utf8(&bytes[len_start..i]) {
+                if let Ok(len) = len_str.parse::<usize>() {
+                    if i + len <= bytes.len() {
+                        let candidate = &sym[i..i + len];
+                        // Only keep if it looks like a valid Rust identifier
+                        if candidate.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                            last_ident = Some(candidate);
+                        }
+                        i += len;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    last_ident.map(|s| s.to_string()).unwrap_or_else(|| sym.to_string())
+}
+
 pub fn parse_lcov(content: &str) -> Vec<CoverageRecord> {
     let mut records: std::collections::HashMap<String, CoverageRecord> =
         std::collections::HashMap::new();
@@ -933,27 +973,52 @@ pub fn parse_lcov(content: &str) -> Vec<CoverageRecord> {
         if let Some(rest) = trimmed.strip_prefix("FN:") {
             if let Some((line_str, name)) = rest.split_once(',') {
                 if let Ok(line_num) = line_str.parse::<usize>() {
+                    // Index by both the raw symbol and the demangled name
+                    let demangled = demangle_rust_v0(name);
                     records.entry(name.to_string()).or_insert(CoverageRecord {
-                        function: name.to_string(),
+                        function: demangled.clone(),
                         line: line_num,
                         hits: 0,
                     });
+                    if demangled != name {
+                        records.entry(demangled.clone()).or_insert(CoverageRecord {
+                            function: demangled,
+                            line: line_num,
+                            hits: 0,
+                        });
+                    }
                 }
             }
         } else if let Some(rest) = trimmed.strip_prefix("FNDA:") {
             if let Some((hits_str, name)) = rest.split_once(',') {
                 if let Ok(hits) = hits_str.parse::<usize>() {
+                    let demangled = demangle_rust_v0(name);
+                    // Update both the mangled key and the demangled key
                     if let Some(rec) = records.get_mut(name) {
                         rec.hits += hits;
                     } else {
                         records.insert(
                             name.to_string(),
                             CoverageRecord {
-                                function: name.to_string(),
+                                function: demangled.clone(),
                                 line: 0,
                                 hits,
                             },
                         );
+                    }
+                    if demangled != name {
+                        if let Some(rec) = records.get_mut(&demangled) {
+                            rec.hits += hits;
+                        } else {
+                            records.insert(
+                                demangled.clone(),
+                                CoverageRecord {
+                                    function: demangled,
+                                    line: 0,
+                                    hits,
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -964,7 +1029,13 @@ pub fn parse_lcov(content: &str) -> Vec<CoverageRecord> {
 
 /// Find an LCOV coverage file in the project root (common names).
 pub fn find_lcov_file(project_path: &Path) -> Option<PathBuf> {
-    for name in ["lcov.info", "coverage.lcov", "target/coverage/lcov.info"] {
+    for name in [
+        "target/lcov.info",
+        "lcov.info",
+        "coverage.lcov",
+        "target/coverage/lcov.info",
+        "coverage/lcov.info",
+    ] {
         let path = project_path.join(name);
         if path.exists() {
             return Some(path);

@@ -77,13 +77,16 @@ git clone https://github.com/KidIkaros/codemetrics.git
 cd codemetrics
 cargo build --release
 
-# Run full suite on current project
-./target/release/codemetrics run .
+# 1. Setup your environment and verify requirements
+./target/release/codemetrics setup
 
-# Single-tool example (CRAP scoring)
-./target/release/codemetrics crap ./src --recursive
+# 2. Run the full 10-tool CI gate with pass/fail thresholds
+./target/release/codemetrics check . \
+    --max-crap 70 \
+    --max-fuzz-risk 200 \
+    --min-doc 50
 
-# JSON output for script/agent consumption
+# 3. Batch run all tools and export to JSON for autonomous agent parsing
 ./target/release/codemetrics run . --format json --output report.json
 ```
 
