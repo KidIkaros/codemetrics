@@ -33,3 +33,6 @@ features = [ "now",]
 [dependencies.uuid]
 version = "1"
 features = [ "v4", "serde",]
+
+[dependencies.unicode-width]
+version = "0.2"

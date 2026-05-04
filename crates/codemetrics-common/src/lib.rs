@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use unicode_width::UnicodeWidthChar;
 
 pub mod memory;
 
@@ -197,33 +198,58 @@ pub fn scan_dir(dir: &Path, recursive: bool, extensions: &[&str], files: &mut Ve
 // STRING UTILITIES
 // ═══════════════════════════════════════════
 
-/// Truncate a string to max length, adding "…" if truncated.
+/// Truncate a string to `max` **display columns**, adding "…" prefix if truncated.
 /// Keeps the RIGHT side (end) of the string.
+/// Uses unicode visual width so multi-byte icons (✓ △ ✗ …) count correctly.
 pub fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else if max > 1 {
-        // Keep the last max-1 chars, find valid char boundary from the right
-        let start = s.len() - (max - 1);
-        let mut start = start;
-        while start > 0 && !s.is_char_boundary(start) {
-            start -= 1;
-        }
-        format!("…{}", &s[start..])
-    } else {
-        "…".to_string()
+    // Fast path: the string already fits
+    let visual_len: usize = s.chars().map(|c| UnicodeWidthChar::width(c).unwrap_or(0)).sum();
+    if visual_len <= max {
+        return s.to_string();
     }
+    if max == 0 {
+        return String::new();
+    }
+    // "…" occupies 1 column; budget = max - 1 columns for actual content
+    let budget = max.saturating_sub(1);
+    // Collect chars from the right until we fill the budget
+    let mut cols = 0usize;
+    let mut keep_from = s.len(); // byte offset
+    for c in s.chars().rev() {
+        let w = UnicodeWidthChar::width(c).unwrap_or(0);
+        if cols + w > budget {
+            break;
+        }
+        cols += w;
+        keep_from -= c.len_utf8();
+    }
+    format!("…{}", &s[keep_from..])
 }
 
-/// Truncate from the left (keep end).
+/// Truncate a string to `max` **display columns**, adding "…" suffix if truncated.
+/// Keeps the LEFT side (start) of the string.
+/// Uses unicode visual width so multi-byte icons (✓ △ ✗ …) count correctly.
 pub fn truncate_left(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else if max > 1 {
-        format!("{}…", &s[..max - 1])
-    } else {
-        "…".to_string()
+    let visual_len: usize = s.chars().map(|c| UnicodeWidthChar::width(c).unwrap_or(0)).sum();
+    if visual_len <= max {
+        return s.to_string();
     }
+    if max == 0 {
+        return String::new();
+    }
+    // "…" occupies 1 column; budget = max - 1 columns for actual content
+    let budget = max.saturating_sub(1);
+    let mut cols = 0usize;
+    let mut keep_to = 0usize; // byte offset
+    for c in s.chars() {
+        let w = UnicodeWidthChar::width(c).unwrap_or(0);
+        if cols + w > budget {
+            break;
+        }
+        cols += w;
+        keep_to += c.len_utf8();
+    }
+    format!("{}…", &s[..keep_to])
 }
 
 // ═══════════════════════════════════════════
@@ -525,12 +551,24 @@ mod tests {
         assert_eq!(truncate("hello", 10), "hello");
         assert_eq!(truncate("hello world", 6), "…world");
         assert_eq!(truncate("hi", 1), "…");
+        assert_eq!(truncate("hi", 0), "");
+        // Unicode icons: "✓ ok" — '✓' is 1 col wide in most terminals
+        assert_eq!(truncate("✓ ok", 10), "✓ ok");
+        // Multi-char: truncate to 3 cols → "…ok" (3 cols)
+        let r = truncate("✓ hello", 3);
+        assert_eq!(r.len(), "…ok".len(), "truncated string byte length unexpected");
+        assert!(r.starts_with('…'));
     }
 
     #[test]
     fn test_truncate_left() {
         assert_eq!(truncate_left("hello", 10), "hello");
         assert_eq!(truncate_left("hello world", 6), "hello…");
+        assert_eq!(truncate_left("hi", 0), "");
+        // Unicode icon keeps left side
+        assert_eq!(truncate_left("✓ ok", 10), "✓ ok");
+        let r = truncate_left("hello ✓", 4);
+        assert!(r.ends_with('…'), "should end with ellipsis, got: {r}");
     }
 
     #[test]

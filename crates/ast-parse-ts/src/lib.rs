@@ -1488,10 +1488,7 @@ fn classify(x: i32) -> &'static str {
     // ── Doc coverage — Rust ──────────────────
 
     #[test]
-    #[ignore] // FIXME: Rust panic (arithmetic overflow) in Python docstring parser —
-    // tree-sitter-rust Python grammar has edge-case limits; test exercises them.
-    // Safe to ignore because (a) only affects Python, (b) guarded with `checked_` ops,
-    // (c) real-world Python docstrings don't hit this boundary. Needs parser boundary check.
+    #[ignore] // Pre-existing: has_doc_comment_before bleeds doc comment across consecutive fns
     fn test_rust_doc_coverage() {
         let src = r#"
 /// Documented function.
@@ -1506,11 +1503,7 @@ pub fn bad() {}
 
     // ── Doc coverage — Python ────────────────
 
-    #[test] #[ignore]
-    // FIXME: overflow panic at lib.rs:805 in parse_doc_coverage for Python —
-    // tree-sitter-rust Python parser hits arithmetic overflow edge case.
-    // Guarded with saturating arithmetic in production; test case is pathological.
-    // Safe to ignore for now; will fix parser boundary checks in next minor.
+    #[test]
     fn test_python_docstring() {
         let src = "def documented():\n    \"\"\"Does something.\"\"\"\n    pass\n\ndef undocumented():\n    pass\n";
         let stats = parse_doc_coverage(src, Language::Python);

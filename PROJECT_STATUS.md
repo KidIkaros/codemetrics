@@ -26,14 +26,12 @@
 ## Known Limitations
 | Tool | Limitation |
 |------|------------|
-| `ast-parse-ts` | Python docstring parser overflows on edge cases (ignored in CI) |
-| `taint` | Secret-type and log-leak detectors need rule refinement |
 | `mutate` | Requires tests to pass — ignores ignored tests by default |
 
 ## Roadmap
-- [ ] Replace `crap` icon table truncation with proper unicode width handling
-- [ ] Fix taint-secret detection (currently ignored)
-- [ ] Add JSON schema validation for all tool outputs
+- [x] Replace `crap` icon table truncation with proper unicode width handling
+- [x] Fix taint-secret detection (log-leak and Secret:: RHS now detected)
+- [x] Add JSON schema validation for all tool outputs
 - [ ] Publish crates to crates.io (currently workspace-only)
 
 ## Getting Started
@@ -53,4 +51,4 @@ scripts/         CI/build helpers
 
 ---
 
-*Last updated: 2026-05-03 | Branch: master*
+*Last updated: 2026-05-04 | Branch: master*

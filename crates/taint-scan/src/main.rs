@@ -289,6 +289,7 @@ fn analyze_file_multilang(
     let lines: Vec<&str> = source.lines().collect();
     let mut in_sensitive_block = false;
     let mut in_test_function = false;
+    let mut prev_was_sensitive_attr = false;
 
     for (idx, &line) in lines.iter().enumerate() {
         let line_num = idx + 1;
@@ -309,6 +310,16 @@ fn analyze_file_multilang(
             }
         }
 
+        // Rust: detect #[sensitive] attribute on its own line
+        if lang == Language::Rust && (trimmed == "#[sensitive]" || trimmed.starts_with("#[sensitive")) {
+            prev_was_sensitive_attr = true;
+            continue;
+        }
+        if prev_was_sensitive_attr {
+            in_sensitive_block = true;
+            prev_was_sensitive_attr = false;
+        }
+
         // Detect marker comment
         if trimmed.contains(sensitive_comment) || trimmed.contains("@sensitive") {
             in_sensitive_block = true;
@@ -321,8 +332,10 @@ fn analyze_file_multilang(
         if let Some(ref var_name) = lhs {
             let lhs_lower = var_name.to_lowercase();
             let is_keyword_sensitive = sensitive_keywords.iter().any(|k| lhs_lower.contains(k));
+            // Detect Secret wrapper types in the RHS: `Secret::new(...)` / `SecretString::new(...)`
+            let is_secret_rhs = trimmed.contains("Secret::");
 
-            if in_sensitive_block || is_keyword_sensitive {
+            if in_sensitive_block || is_keyword_sensitive || is_secret_rhs {
                 sensitive_vars.insert(var_name.clone());
                 in_sensitive_block = false;
                 continue;
@@ -607,17 +620,14 @@ fn is_debug_sink_multilang(line: &str, lang: Language) -> bool {
 mod tests {
     use super::*;
 
-    #[test] #[ignore]
-    // FIXME: taint detection regression (log leak test) — detection pattern failing
-    // Safe to ignore because (a) taint analysis is heuristic-based, (b) this specific
-    // Rust-to-Rust flow is low-risk in practice, (c) will refine detection rules in next minor.
+    #[test]
     fn test_detect_log_leak() {
         let source = r#"
 #[sensitive]
 let my_credential = load_secret();
 
 fn do_something() {
-    process_value(my_credential);
+    log::info!("credential: {}", my_credential);
 }
 "#;
         let (violations, sensitive_count) =
@@ -648,17 +658,14 @@ fn hash_password() {
         );
     }
 
-    #[test] #[ignore]
-    // FIXME: taint detection regression (secret type test) — detection pattern failing
-    // Safe to ignore because (a) taint analysis is heuristic-based, (b) this specific
-    // secret propagation pattern is low-risk in practice, (c) detection rules to be refined.
+    #[test]
     fn test_detect_secret_type() {
         let source = r#"
 let my_value = Secret::new("my_value");
-process_value(my_value);
+println!("value: {}", my_value);
 "#;
         let (violations, sensitive_count) =
-            analyze_file_multilang(source, "test.ts", "sensitive", ast_parse_ts::Language::Rust);
+            analyze_file_multilang(source, "test.rs", "sensitive", ast_parse_ts::Language::Rust);
         assert_eq!(sensitive_count, 1, "Should detect secret type variable");
         assert!(!violations.is_empty(), "Should detect print leak");
     }

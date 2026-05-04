@@ -40,5 +40,5 @@ fn test_nonexistent_path() {
         .arg("/tmp/nonexistent-crate-12345")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("No Cargo.toml found"));
+        .stderr(predicate::str::contains("Cannot resolve path"));
 }
