@@ -59,12 +59,20 @@ struct ToolCatalogEntry {
     args_schema: Value,
 }
 
+#[derive(Debug, Serialize)]
+struct McpTool {
+    name: String,
+    description: String,
+    #[serde(rename = "inputSchema")]
+    input_schema: Value,
+}
+
 fn tool_catalog() -> Vec<ToolCatalogEntry> {
     vec![
         ToolCatalogEntry {
             name: "debt-scan".to_string(),
             description: "Scan for TODO/FIXME/XXX markers".to_string(),
-            binary: "debt-scan".to_string(),
+            binary: "debt".to_string(),
             args_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -76,7 +84,7 @@ fn tool_catalog() -> Vec<ToolCatalogEntry> {
         ToolCatalogEntry {
             name: "doc-coverage".to_string(),
             description: "Check public API documentation coverage".to_string(),
-            binary: "doc-coverage".to_string(),
+            binary: "doccov".to_string(),
             args_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -113,7 +121,7 @@ fn tool_catalog() -> Vec<ToolCatalogEntry> {
         ToolCatalogEntry {
             name: "risk-map".to_string(),
             description: "Map risk by file churn and complexity".to_string(),
-            binary: "risk-map".to_string(),
+            binary: "riskmap".to_string(),
             args_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -186,23 +194,49 @@ fn tool_catalog() -> Vec<ToolCatalogEntry> {
     ]
 }
 
-async fn handle_request(req: JsonRpcRequest) -> JsonRpcResponse {
+fn mcp_tools_list() -> Value {
+    let mcp_tools: Vec<McpTool> = tool_catalog()
+        .into_iter()
+        .map(|e| McpTool {
+            name: e.name,
+            description: e.description,
+            input_schema: e.args_schema,
+        })
+        .collect();
+    serde_json::json!({ "tools": mcp_tools })
+}
+
+async fn handle_request(req: JsonRpcRequest) -> Option<JsonRpcResponse> {
     match req.method.as_str() {
-        "ping" => JsonRpcResponse {
+        // ── MCP lifecycle ──────────────────────────────────────────────────
+        "initialize" => Some(JsonRpcResponse {
             jsonrpc: "2.0",
             id: req.id,
-            result: Some(serde_json::json!({ "pong": true })),
+            result: Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {} },
+                "serverInfo": {
+                    "name": "codemetrics",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            })),
             error: None,
-        },
-        "tools/list" => JsonRpcResponse {
+        }),
+        // MCP notification — client sends after initialize, no response needed
+        "notifications/initialized" => None,
+
+        // ── tools/list: supports both legacy array and MCP envelope ────────
+        "tools/list" => Some(JsonRpcResponse {
             jsonrpc: "2.0",
             id: req.id,
-            result: Some(serde_json::to_value(tool_catalog()).unwrap()),
+            result: Some(mcp_tools_list()),
             error: None,
-        },
-        "tools/run" => {
-            let result = run_tool(req.params).await;
-            match result {
+        }),
+
+        // ── tools/call: MCP standard shape ────────────────────────────────
+        "tools/call" => {
+            let result = run_tool_mcp(req.params).await;
+            Some(match result {
                 Ok(value) => JsonRpcResponse {
                     jsonrpc: "2.0",
                     id: req.id,
@@ -219,9 +253,38 @@ async fn handle_request(req: JsonRpcRequest) -> JsonRpcResponse {
                         data: None,
                     }),
                 },
-            }
+            })
         }
-        "tools/run_stream" => JsonRpcResponse {
+
+        // ── Legacy methods (backward compat) ──────────────────────────────
+        "ping" => Some(JsonRpcResponse {
+            jsonrpc: "2.0",
+            id: req.id,
+            result: Some(serde_json::json!({ "pong": true })),
+            error: None,
+        }),
+        "tools/run" => {
+            let result = run_tool(req.params).await;
+            Some(match result {
+                Ok(value) => JsonRpcResponse {
+                    jsonrpc: "2.0",
+                    id: req.id,
+                    result: Some(value),
+                    error: None,
+                },
+                Err(e) => JsonRpcResponse {
+                    jsonrpc: "2.0",
+                    id: req.id,
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32603,
+                        message: e,
+                        data: None,
+                    }),
+                },
+            })
+        }
+        "tools/run_stream" => Some(JsonRpcResponse {
             jsonrpc: "2.0",
             id: req.id,
             result: None,
@@ -230,14 +293,14 @@ async fn handle_request(req: JsonRpcRequest) -> JsonRpcResponse {
                 message: "tools/run_stream requires stdio transport mode".to_string(),
                 data: None,
             }),
-        },
-        "shutdown" => JsonRpcResponse {
+        }),
+        "shutdown" => Some(JsonRpcResponse {
             jsonrpc: "2.0",
             id: req.id,
             result: Some(serde_json::json!({ "shutdown": true })),
             error: None,
-        },
-        _ => JsonRpcResponse {
+        }),
+        _ => Some(JsonRpcResponse {
             jsonrpc: "2.0",
             id: req.id,
             result: None,
@@ -246,8 +309,25 @@ async fn handle_request(req: JsonRpcRequest) -> JsonRpcResponse {
                 message: format!("Method not found: {}", req.method),
                 data: None,
             }),
-        },
+        }),
     }
+}
+
+async fn run_tool_mcp(params: Option<Value>) -> Result<Value, String> {
+    let params = params.ok_or("Missing params")?;
+    let name = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'name' field in tools/call params")?;
+    let arguments = params.get("arguments").cloned().unwrap_or(Value::Object(Default::default()));
+
+    let wrapped_params = serde_json::json!({ "tool": name, "args": arguments });
+    let inner = run_tool(Some(wrapped_params)).await?;
+
+    let text = serde_json::to_string_pretty(&inner).unwrap_or_else(|_| inner.to_string());
+    Ok(serde_json::json!({
+        "content": [{ "type": "text", "text": text }]
+    }))
 }
 
 async fn run_tool(params: Option<Value>) -> Result<Value, String> {
@@ -365,20 +445,16 @@ async fn run_stdio() {
             }
         };
 
-        if req.method == "shutdown" {
-            let resp = handle_request(req).await;
+        let is_shutdown = req.method == "shutdown";
+        if let Some(resp) = handle_request(req).await {
             let msg = serde_json::to_string(&resp).unwrap();
             let _ = stdout.write_all(msg.as_bytes()).await;
             let _ = stdout.write_all(b"\n").await;
             let _ = stdout.flush().await;
+        }
+        if is_shutdown {
             break;
         }
-
-        let resp = handle_request(req).await;
-        let msg = serde_json::to_string(&resp).unwrap();
-        let _ = stdout.write_all(msg.as_bytes()).await;
-        let _ = stdout.write_all(b"\n").await;
-        let _ = stdout.flush().await;
     }
 }
 
@@ -420,18 +496,15 @@ async fn run_tcp(port: u16) {
                     }
                 };
 
-                if req.method == "shutdown" {
-                    let resp = handle_request(req).await;
+                let is_shutdown = req.method == "shutdown";
+                if let Some(resp) = handle_request(req).await {
                     let msg = serde_json::to_string(&resp).unwrap();
                     let _ = writer.write_all(msg.as_bytes()).await;
                     let _ = writer.write_all(b"\n").await;
+                }
+                if is_shutdown {
                     break;
                 }
-
-                let resp = handle_request(req).await;
-                let msg = serde_json::to_string(&resp).unwrap();
-                let _ = writer.write_all(msg.as_bytes()).await;
-                let _ = writer.write_all(b"\n").await;
             }
         });
     }
@@ -449,7 +522,7 @@ mod tests {
             method: "ping".to_string(),
             params: None,
         };
-        let resp = handle_request(req).await;
+        let resp = handle_request(req).await.unwrap();
         assert!(resp.result.is_some());
         assert_eq!(resp.error, None);
     }
@@ -462,11 +535,11 @@ mod tests {
             method: "tools/list".to_string(),
             params: None,
         };
-        let resp = handle_request(req).await;
+        let resp = handle_request(req).await.unwrap();
         assert!(resp.result.is_some());
         let binding = resp.result.unwrap();
-        let list = binding.as_array().unwrap();
-        assert!(!list.is_empty());
+        let tools = binding.get("tools").unwrap();
+        assert!(tools.as_array().unwrap().is_empty() == false);
     }
 
     #[tokio::test]
@@ -477,7 +550,37 @@ mod tests {
             method: "shutdown".to_string(),
             params: None,
         };
-        let resp = handle_request(req).await;
+        let resp = handle_request(req).await.unwrap();
         assert!(resp.result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_initialize() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {}
+            })),
+        };
+        let resp = handle_request(req).await.unwrap();
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert_eq!(result["protocolVersion"], "2024-11-05");
+        assert!(result["serverInfo"]["name"] == "codemetrics");
+    }
+
+    #[tokio::test]
+    async fn test_notifications_initialized_returns_none() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: None,
+            method: "notifications/initialized".to_string(),
+            params: None,
+        };
+        let resp = handle_request(req).await;
+        assert!(resp.is_none());
     }
 }

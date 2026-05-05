@@ -23,7 +23,7 @@ CodeMetrics/
 │   └── taint-scan/        # Taint analysis (data flow)
 ├── docs/                   # Documentation (user/developer guides)
 ├── .quality.toml           # Quality gate configuration
-└── test.sh                 # Safe test runner (batched)
+└── scripts/test.sh         # Safe test runner (batched)
 ```
 
 ## Key Crates
@@ -123,7 +123,7 @@ proptest! {
 
 The project uses GitHub Actions (`.github/workflows/quality.yml`):
 1. **Build**: Compile all tools in release mode
-2. **Test**: Run batched tests (`./test.sh`)
+2. **Test**: Run batched tests (`./scripts/test.sh`)
 3. **Audit**: Self-audit with `codemetrics run .`, upload SARIF
 
 ## Quality Standards for Contributors

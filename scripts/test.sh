@@ -37,7 +37,7 @@ if [[ "$*" == *"--safe"* ]]; then
     export CARGO_BUILD_JOBS=1
     export RUST_TEST_THREADS=1
     ALL_CRATES=(
-        codemetrics-common ast-parse ast-parse-ts codemetrics-server codemetrics-cli
+        codemetrics-common ast-parse-ts codemetrics-server codemetrics-cli
         debt-scan doc-coverage crap-metric coupling risk-map
         duplication taint-scan fuzz-surface mutation-test prop-cov
     )
@@ -56,13 +56,17 @@ if [[ $# -eq 0 ]] || [[ "$*" == *"--workspace"* ]]; then
     echo "Running tests in batches (avoids peak memory from --workspace compilation)..."
     BATCHES=(
         "-p codemetrics-common"
-        "-p ast-parse -p ast-parse-ts"
+        "-p ast-parse-ts"
         "-p codemetrics-server -p codemetrics-cli"
         "-p debt-scan -p doc-coverage"
         "-p crap-metric -p coupling"
         "-p risk-map -p duplication"
         "-p taint-scan -p fuzz-surface"
         "-p mutation-test -p prop-cov"
+        "-p line-length -p halstead -p secrets -p dead-code"
+        "-p cohesion -p comment-ratio -p error-handling"
+        "-p type-coverage -p vuln-scan"
+        "-p sast -p crypto-check -p licenses -p sbom"
     )
     FAILED=0
     for batch in "${BATCHES[@]}"; do

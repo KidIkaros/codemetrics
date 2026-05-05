@@ -52,8 +52,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Run unit tests (batched to avoid OOM)
         run: |
-          chmod +x ./test.sh
-          ./test.sh
+          chmod +x ./scripts/test.sh
+          ./scripts/test.sh
 
   audit:
     runs-on: ubuntu-latest

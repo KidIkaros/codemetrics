@@ -1150,10 +1150,27 @@ fn home_target_dir() -> PathBuf {
 }
 
 fn verify_tests_pass(crate_root: &Path, package_name: &str, timeout: u64) -> Result<(), String> {
-    println!("Verifying tests pass in scratch copy...");
-    match run_cargo_test_with_timeout(crate_root, package_name, timeout) {
+    use std::io::Write;
+    let done = Arc::new(AtomicBool::new(false));
+    let done_clone = done.clone();
+    let spinner = thread::spawn(move || {
+        let tick = Duration::from_secs(1);
+        let mut elapsed = 0u64;
+        while !done_clone.load(Ordering::Relaxed) {
+            eprint!("\r  Verifying baseline tests... {}s", elapsed);
+            let _ = std::io::stderr().flush();
+            thread::sleep(tick);
+            elapsed += 1;
+        }
+    });
+    let outcome = run_cargo_test_with_timeout(crate_root, package_name, timeout);
+    done.store(true, Ordering::Relaxed);
+    let _ = spinner.join();
+    eprint!("\r");
+    match outcome {
         TestOutcome::Survived(_) => {
-            println!("✓ Tests pass.\n");
+            println!("✓ Original tests pass.");
+            println!();
             Ok(())
         }
         TestOutcome::Killed(out) => Err(format!(
@@ -1502,120 +1519,6 @@ fn find_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
             }
         }
     }
-}
-
-#[cfg(test)]
-fn output_table(results: &[MutantResult]) {
-    let killed = results.iter().filter(|r| r.status == "killed").count();
-    let survived = results.iter().filter(|r| r.status == "survived").count();
-    let timeout = results.iter().filter(|r| r.status == "timeout").count();
-    let error = results.iter().filter(|r| r.status == "error").count();
-    let total = results.len();
-
-    println!();
-    println!("MUTATION TESTING RESULTS");
-    println!("{}", separator(80));
-
-    if survived > 0 {
-        println!();
-        println!("SURVIVED MUTANTS (tests didn't catch these changes):");
-
-        let columns = [
-            Column::left("ID", 6),
-            Column::left("FILE", 40),
-            Column::right("LINE", 5),
-            Column::left("DESCRIPTION", 30),
-        ];
-        print_table_header(&columns);
-
-        for r in results.iter().filter(|r| r.status == "survived") {
-            let id_str = format!("[{}]", r.id);
-            let line_str = r.line.to_string();
-            print_table_row(&columns, &[&id_str, &r.file, &line_str, &r.description]);
-        }
-    }
-
-    println!();
-    println!("{}", separator(80));
-
-    let score = if total > 0 {
-        killed as f64 / total as f64 * 100.0
-    } else {
-        0.0
-    };
-    let verdict = if score >= 90.0 {
-        "Excellent -- strong test suite"
-    } else if score >= 70.0 {
-        "Good -- most mutations caught"
-    } else if score >= 50.0 {
-        "Weak -- many mutations survived"
-    } else {
-        "Poor -- test suite needs significant work"
-    };
-
-    let summary = [
-        ("Total mutants:", total.to_string()),
-        (
-            "Killed:",
-            format!("{} ({:.0}%)", killed, killed as f64 / total as f64 * 100.0),
-        ),
-        (
-            "Survived:",
-            format!(
-                "{} ({:.0}%)",
-                survived,
-                survived as f64 / total as f64 * 100.0
-            ),
-        ),
-        ("Mutation Score:", format!("{:.0}%", score)),
-        ("Verdict:", verdict.to_string()),
-    ];
-    codemetrics_common::print_summary(&summary);
-
-    if timeout > 0 {
-        println!("  Timeout:        {}", timeout);
-    }
-    if error > 0 {
-        println!("  Error:          {}", error);
-    }
-
-    if survived > 0 {
-        println!();
-        println!(
-            "  {} mutant(s) survived. Your tests didn't detect these code changes.",
-            survived
-        );
-        println!("    Consider adding tests for the affected functions.");
-    }
-}
-
-#[cfg(test)]
-fn output_json(results: &[MutantResult]) -> Result<(), Box<dyn std::error::Error>> {
-    let killed = results.iter().filter(|r| r.status == "killed").count();
-    let survived = results.iter().filter(|r| r.status == "survived").count();
-    let timeout = results.iter().filter(|r| r.status == "timeout").count();
-    let error = results.iter().filter(|r| r.status == "error").count();
-    let total = results.len();
-    let score = if total > 0 {
-        killed as f64 / total as f64 * 100.0
-    } else {
-        0.0
-    };
-
-    let report = MutationReport {
-        results: results.to_vec(),
-        summary: MutationSummary {
-            total_mutants: total,
-            killed,
-            survived,
-            timeout,
-            error,
-            mutation_score: score,
-        },
-    };
-
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
 }
 
 fn output_table_streaming(

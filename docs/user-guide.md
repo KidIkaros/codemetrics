@@ -6,80 +6,114 @@ This guide shows how to use CodeMetrics to audit and improve your project's code
 
 1. **Install CodeMetrics**:
    ```bash
-   git clone https://github.com/your-repo/CodeMetrics.git
-   cd CodeMetrics && cargo build --release
+   git clone https://github.com/KidIkaros/codemetrics.git
+   cd codemetrics && cargo build --release
    export PATH="$PWD/target/release:$PATH"
    ```
 
-2. **Audit your project**:
+2. **Bootstrap your project** (auto-detects language, writes `.quality.toml`):
    ```bash
-   codemetrics run /path/to/your/project --format table
+   codemetrics init
    ```
 
-3. **Interpret results**:
-   - Look for `✗` marks (failing checks)
-   - Check the "How to Fix" column (if using `--explain`)
-   - Focus on High/Critical severity items first
+3. **Run all 21 checks**:
+   ```bash
+   codemetrics check .
+   ```
+
+4. **Generate an HTML audit report**:
+   ```bash
+   codemetrics report . --open
+   ```
+
+5. **Interpret results**:
+   - Look for `✗` marks (failing checks) in terminal output
+   - Report shows Health Score (A–F), category breakdown, and per-finding drill-downs
+   - Focus on Critical and High severity items first
 
 ## Using Individual Tools
 
 ### CRAP Metric (Maintenance Risk)
 ```bash
-crap ./src --recursive --explain
+codemetrics crap ./src --recursive
 ```
 - **Target**: CRAP < 15 per function
 - **Fix**: Reduce complexity (split functions) + increase test coverage
 
 ### Technical Debt Scan
 ```bash
-debt ./src --recursive --explain
+codemetrics debt ./src --recursive
 ```
 - **Target**: 0 TODO/FIXME/HACK markers
 - **Fix**: Address each marker or convert to tracked issues
 
 ### Documentation Coverage
 ```bash
-doccov ./src --recursive --min 95
+codemetrics doccov ./src --recursive
 ```
 - **Target**: >95% public API documentation
 - **Fix**: Add doc comments to all public functions/types
 
 ### Code Duplication
 ```bash
-dupfind ./src --recursive --min-lines 3
+codemetrics run . --format json | jq '.checks[] | select(.name=="dup")'
 ```
 - **Target**: 0 duplication blocks >3 lines
 - **Fix**: Extract duplicated code into shared functions
 
+### Security (SAST / Secrets / Crypto)
+```bash
+codemetrics check . --only sast,secrets,crypto,taint
+```
+- **Target**: 0 findings
+- **Fix**: Address each finding; use `--verbose` for file:line context
+
 ### Fuzz Surface Analysis
 ```bash
-fuzz ./src --recursive --min-score 30
+codemetrics fuzz ./src --recursive
 ```
 - **Target**: Identify high-value fuzz targets
 - **Fix**: Add fuzz harnesses for flagged functions
 
 ## Batch Mode (Recommended)
 
-Use the unified CLI for full audits:
 ```bash
-# Generate config
-quality init .
+# 1. Auto-detect ecosystem and write .quality.toml
+codemetrics init
 
-# Edit .quality.toml to set your targets
+# 2. Edit thresholds if needed
 vim .quality.toml
 
-# Run full audit
-codemetrics run . --format sarif --baseline .codemetrics-baseline.sarif
+# 3. Run all 21 checks
+codemetrics check .
+
+# 4. Generate visual report
+codemetrics report . --open
 ```
 
 ## CI Integration
 
-Add to your GitHub Actions workflow:
+```bash
+# Wire GitHub Actions + pre-commit hook automatically
+codemetrics init --ci
+```
+
+Or add manually to your GitHub Actions workflow:
 ```yaml
-- name: Quality Check
-  run: |
-    codemetrics run . --format sarif
-    # Fails if standards not met
+- name: Quality Gate
+  run: codemetrics check . --ci   # JSON output, no TTY colors, exits 1 on failure
+- name: Upload SARIF
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
+```
+
+## Watch Mode (live dev loop)
+
+```bash
+codemetrics watch .            # runs debt + doc + crap on every file change
+codemetrics watch . --full     # runs all 21 checks every cycle
+codemetrics watch . --no-tests # skip tests, metrics-only
 ```
 
 ## Understanding Reports

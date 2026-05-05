@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "codemetrics",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "description": "AI-native code quality audit toolkit - 10 tools for automated code analysis. Designed for CI/CD pipelines and AI agents.",
     "documentation": "https://github.com/KidIkaros/codemetrics",
     "license": "Apache-2.0 OR OPL-1.1",
@@ -36,7 +36,7 @@
       "tags": ["metrics", "risk", "maintenance", "complexity", "testing"],
       "average_response_size": 1024,
       "call": {
-        "syntax": "cargo run -p crap-metric -- {path} --recursive --format {format} --min-score {minScore}",
+        "syntax": "codemetrics crap {path} --recursive --format {format} --min-score {minScore}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -74,7 +74,7 @@
       "tags": ["testing", "mutation", "test-quality"],
       "average_response_size": 2048,
       "call": {
-        "syntax": "cargo run -p mutation-test -- {path} -p {package} --max-mutants {maxMutants} --timeout {timeout} --format {format}",
+        "syntax": "codemetrics mutate {path} -p {package} --max-mutants {maxMutants} --timeout {timeout} --format {format}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -120,7 +120,7 @@
       "tags": ["technical-debt", "todos", "cleanup"],
       "average_response_size": 512,
       "call": {
-        "syntax": "cargo run -p debt-scan -- {path} --recursive --format {format} --marker {marker}",
+        "syntax": "codemetrics debt {path} --recursive --format {format} --marker {marker}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -150,7 +150,7 @@
       "tags": ["risk", "churn", "complexity", "maintenance"],
       "average_response_size": 1024,
       "call": {
-        "syntax": "cargo run -p risk-map -- {path} --recursive --min-risk {minRisk} --since {since}",
+        "syntax": "codemetrics riskmap {path} --min-risk {minRisk} --since {since}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -177,7 +177,7 @@
       "tags": ["documentation", "docs", "api"],
       "average_response_size": 256,
       "call": {
-        "syntax": "cargo run -p doc-coverage -- {path} --recursive --format {format} --min {minCoverage}",
+        "syntax": "codemetrics doccov {path} --recursive --format {format} --min {minCoverage}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -202,7 +202,7 @@
       "tags": ["security", "taint", "data-flow", "secrets"],
       "average_response_size": 512,
       "call": {
-        "syntax": "cargo run -p taint-scan -- {path} --recursive --format {format} --rule {rule}",
+        "syntax": "codemetrics taint {path} --recursive --format {format} --rule {rule}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -231,7 +231,7 @@
       "tags": ["coupling", "dependencies", "architecture"],
       "average_response_size": 768,
       "call": {
-        "syntax": "cargo run -p coupling -- {path} --format {format} --min-coupling {minCoupling}",
+        "syntax": "codemetrics coupling {path} --format {format} --min-coupling {minCoupling}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -261,7 +261,7 @@
       "tags": ["duplication", "refactoring", "dry"],
       "average_response_size": 1024,
       "call": {
-        "syntax": "cargo run -p duplication -- {path} --recursive --format {format} --min-lines {minLines}",
+        "syntax": "codemetrics dupfind {path} --recursive --format {format} --min-lines {minLines}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -277,6 +277,7 @@
             "locations": {
               "type": "array",
               "items": {"properties": {"file": {"type": "string"}, "line": {"type": "number"}}}
+            }
           }
         }
       }
@@ -287,7 +288,7 @@
       "tags": ["fuzzing", "testing", "security"],
       "average_response_size": 512,
       "call": {
-        "syntax": "cargo run -p fuzz-surface -- {path} --recursive --format {format} --min-score {minScore}",
+        "syntax": "codemetrics fuzz {path} --recursive --format {format} --min-score {minScore}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -316,7 +317,7 @@
       "tags": ["testing", "property-based", "coverage"],
       "average_response_size": 256,
       "call": {
-        "syntax": "cargo run -p prop-cov -- {path} --recursive --format {format}",
+        "syntax": "codemetrics propcov {path} --recursive --format {format}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -341,7 +342,7 @@
       "tags": ["batch", "full-audit", "ci"],
       "average_response_size": 4096,
       "call": {
-        "syntax": "cargo run -p codemetrics-cli -- run {path} --format {format}",
+        "syntax": "codemetrics run {path} --format {format}",
         "protocol": "cli",
         "cwd": "{project_root}"
       },
@@ -364,24 +365,148 @@
         }
       },
       "notes": "Recommended for CI/CD. Outputs SARIF format compatible with GitHub Security tab."
+    },
+    {
+      "name": "init",
+      "description": "Auto-detect project ecosystem and write language-tuned .quality.toml thresholds. With --ci also writes GitHub Actions workflow, installs pre-commit hook, seeds baseline SARIF, and records history.",
+      "tags": ["setup", "config", "ci", "zero-config"],
+      "average_response_size": 256,
+      "call": {
+        "syntax": "codemetrics init [--ci] [--output {output}]",
+        "protocol": "cli",
+        "cwd": "{project_root}"
+      },
+      "inputs": {
+        "ci": {"type": "boolean", "default": false, "description": "Full CI bootstrap: GHA workflow + pre-commit hook + baseline SARIF + history"},
+        "output": {"type": "string", "default": ".quality.toml", "description": "Output path for config file"}
+      },
+      "outputs": {
+        "type": "object",
+        "properties": {
+          "ecosystem": {"type": "string", "enum": ["Rust", "JavaScript", "TypeScript", "Python", "Go", "Unknown"]},
+          "config_path": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "check",
+      "description": "Run all quality checks in one call. Automatically loads thresholds from .quality.toml if present. CLI flags override file values. Returns structured JSON with per-check pass/fail, score, and threshold.",
+      "tags": ["gate", "ci", "agent", "json"],
+      "average_response_size": 2048,
+      "call": {
+        "syntax": "codemetrics check {path} --format {format}",
+        "protocol": "cli",
+        "cwd": "{project_root}"
+      },
+      "inputs": {
+        "path": {"type": "string", "required": true},
+        "format": {"type": "string", "default": "json", "enum": ["text", "json"]},
+        "skip": {"type": "string", "description": "Comma-separated checks to skip (e.g. taint,fuzz)"},
+        "coverage": {"type": "string", "description": "Path to lcov coverage file for accurate CRAP scores"},
+        "max_crap": {"type": "number", "description": "Override CRAP threshold (overrides .quality.toml)"},
+        "max_debt": {"type": "number", "description": "Override max debt markers"},
+        "min_doc": {"type": "number", "description": "Override min documentation coverage %"}
+      },
+      "outputs": {
+        "type": "object",
+        "properties": {
+          "passed": {"type": "boolean"},
+          "checks": {
+            "type": "array",
+            "items": {
+              "properties": {
+                "name": {"type": "string"},
+                "passed": {"type": "boolean"},
+                "score": {"type": "number"},
+                "threshold": {"type": "number"},
+                "message": {"type": "string"}
+              }
+            }
+          },
+          "summary": {
+            "properties": {
+              "total": {"type": "number"},
+              "passed": {"type": "number"},
+              "failed": {"type": "number"}
+            }
+          }
+        }
+      },
+      "error_handling": {
+        "exit_codes": {
+          "0": "All checks passed",
+          "1": "One or more checks failed",
+          "2": "Error (parse failure, missing binary)"
+        }
+      },
+      "notes": "Auto-loads .quality.toml. Run `codemetrics init` first to generate it. Fastest agent quality gate."
+    },
+    {
+      "name": "watch",
+      "description": "Watch for file changes and re-run checks. Auto-detects project ecosystem, test runner, and coverage command. Feeds live coverage into CRAP scores.",
+      "tags": ["watch", "live", "dev-loop"],
+      "average_response_size": 0,
+      "call": {
+        "syntax": "codemetrics watch {path} [--no-tests] [--debounce-ms {debounceMs}]",
+        "protocol": "cli",
+        "cwd": "{project_root}"
+      },
+      "inputs": {
+        "path": {"type": "string", "default": "."},
+        "no_tests": {"type": "boolean", "default": false, "description": "Skip test + coverage run; metrics-only mode"},
+        "debounce_ms": {"type": "number", "default": 500, "description": "Debounce delay in ms after file change"},
+        "checks": {"type": "string", "default": "debt,doc,crap", "description": "Comma-separated checks to run on change"}
+      },
+      "notes": "Runs continuously. Use --no-tests for a fast feedback loop without waiting for test suite."
+    },
+    {
+      "name": "install-hooks",
+      "description": "Install a CodeMetrics pre-commit git hook. Default hook runs tests, collects coverage, then runs codemetrics check. --fast skips tests for a lightweight metrics-only hook.",
+      "tags": ["hooks", "git", "pre-commit", "ci"],
+      "average_response_size": 128,
+      "call": {
+        "syntax": "codemetrics install-hooks [--fast] [{repo}]",
+        "protocol": "cli",
+        "cwd": "{project_root}"
+      },
+      "inputs": {
+        "repo": {"type": "string", "default": ".", "description": "Git repo root"},
+        "fast": {"type": "boolean", "default": false, "description": "Install lightweight hook that skips test execution"}
+      }
     }
   ],
   "examples": [
     {
+      "name": "Zero-config setup",
+      "command": "codemetrics init"
+    },
+    {
+      "name": "CI bootstrap",
+      "command": "codemetrics init --ci"
+    },
+    {
+      "name": "Quick quality gate (agent)",
+      "command": "codemetrics check . --format json"
+    },
+    {
       "name": "Full audit",
-      "command": "cargo run -p codemetrics-cli -- run . --format sarif > results.sarif"
+      "command": "codemetrics run . --format sarif > results.sarif"
     },
     {
       "name": "CRAP score check",
-      "command": "cargo run -p crap-metric -- ./src --recursive --format json --min-score 20"
+      "command": "codemetrics crap ./src --recursive --format json"
     },
     {
       "name": "Mutation testing",
-      "command": "cargo run -p mutation-test -- . -p ast-parse-ts --max-mutants 5 --timeout 30"
+      "command": "codemetrics mutate . -p ast-parse-ts --max-mutants 5 --format json"
     },
     {
       "name": "Risk map",
-      "command": "cargo run -p risk-map -- . --min-risk 30"
+      "command": "codemetrics riskmap . --format json"
+    },
+    {
+      "name": "MCP server",
+      "command": "codemetrics-server --mode stdio"
     }
   ]
 }

@@ -24,13 +24,13 @@ CARGO_TARGET_DIR=/tmp/CodeMetrics-build cargo build
 ### Testing
 ```bash
 # Run all tests (recommended for most cases)
-./test.sh
+./scripts/test.sh
 
 # Ultra-safe mode - one crate at a time (for low-memory systems)
-./test.sh --safe
+./scripts/test.sh --safe
 
 # Test specific crate
-./test.sh -p crap-metric
+./scripts/test.sh -p crap-metric
 
 # Standard cargo test (for single crate development)
 cargo test -p codemetrics-common

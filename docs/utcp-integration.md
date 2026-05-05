@@ -1,134 +1,181 @@
 # UTCP Integration Guide
 
-This document explains how to integrate CodeMetrics with AI agents using the Universal Tool Calling Protocol (UTCP).
+CodeMetrics is built around the **Universal Tool Calling Protocol (UTCP)**: agents call the CLI directly with no wrapper process. A separate `codemetrics-server` MCP shim exists only for GUI clients (Claude Desktop, Cursor, Windsurf) that cannot invoke CLI tools natively.
 
-## What is UTCP?
+## Integration Architecture
 
-UTCP (Universal Tool Calling Protocol) is a specification that enables AI agents to discover and call tools directly using their native protocols - no wrapper servers required.
+```
+Coding agents (Claude Code, Hermes, OpenCode, Codex, custom)
+  └── UTCP / CLI  ← primary path — zero-dependency, full feature set
+        ├── docs/utcp/codemetrics.json   (static manifest)
+        └── codemetrics discover         (live catalog from binary)
 
-**Key Benefits:**
-- 🚀 Zero latency overhead - direct tool calls
-- 🔒 Native security - use existing auth
-- 🌐 Protocol flexibility - HTTP, CLI, and more
-- ⚡ Easy integration - minimal changes needed
-- 📈 Scalable - leverage existing infrastructure
+GUI clients (Claude Desktop, Cursor, Windsurf)
+  └── MCP shim  ← compatibility layer only
+        └── codemetrics-server --mode stdio
+```
 
-## Integration Options
+Choose **UTCP/CLI** unless your client physically cannot run subprocess commands.
 
-### Option 1: UTCP Manual (JSON)
+---
 
-CodeMetrics provides a UTCP manual at `utcps/CodeMetrics.json` that defines all tools:
-- Tool names and descriptions
-- Call syntax for each tool
-- Input/output schemas
+## UTCP — Primary Integration
+
+### 1. Static Manifest
+
+`docs/utcp/codemetrics.json` is the machine-readable UTCP manual. It contains every tool's call syntax, input/output schema, and description — everything an agent needs to invoke CodeMetrics without any server.
 
 ```bash
-# Fetch the manual
-cat utcps/CodeMetrics.json
+cat docs/utcp/codemetrics.json
 ```
 
-### Option 2: Discover Command
-
-Use the built-in discover command to get tool info:
-
-```bash
-# JSON format (for programmatic parsing)
-codemetrics discover --format json
-
-# Text format (for humans)
-codemetrics discover --format text
-```
-
-### Option 3: CLI + JSON
-
-All tools support JSON output for programmatic consumption:
-
-```bash
-# Individual tools
-cargo run -p crap-metric -- ./src --recursive --format json
-cargo run -p debt-scan -- ./src --recursive --format json
-cargo run -p risk-map -- . --format json
-
-# Full audit
-cargo run -p codemetrics-cli -- run . --format sarif > results.sarif
-```
-
-## AI Agent Integration
-
-### Claude Code
-
-Add to `CLAUDE.md` in project root:
-
-```markdown
-# Code Quality Tools
-
-This project uses CodeMetrics. Before significant changes, run:
-
-- `cargo run -p codemetrics-cli -- run . --format sarif` for full audit
-- `cargo run -p mutation-test -- . -p <crate> --max 5` to verify tests
-```
-
-Claude Code automatically loads `CLAUDE.md` from project root.
-
-### OpenCode
-
-Add to `AGENTS.md` in project root:
-
-```markdown
-# Code Quality Tools
-
-Use CodeMetrics before major changes:
-
-| Tool | Command |
-|------|---------|
-| Full audit | codemetrics run . --format sarif |
-| CRAP scores | cargo run -p crap-metric -- ./src --recursive |
-| Tests | cargo run -p mutation-test -- . -p <crate> --max 5 |
-```
-
-OpenCode automatically loads `AGENTS.md` from project root.
-
-### Custom UTCP Client
-
-Use the UTCP manual directly:
+Programmatic usage:
 
 ```python
-import json
+import json, subprocess
 
-# Load the manual
-with open("utcps/CodeMetrics.json") as f:
+with open("docs/utcp/codemetrics.json") as f:
     manual = json.load(f)
 
-# Find a tool
 for tool in manual["tools"]:
-    if tool["name"] == "crap":
-        print(f"Use: {tool['call']['syntax']}")
+    print(tool["name"], "->", tool["call"]["syntax"])
 ```
+
+### 2. Live Discovery
+
+The binary itself is the authoritative source of truth:
+
+```bash
+codemetrics discover --format json   # machine-readable
+codemetrics discover --format text   # human-readable
+```
+
+Use this in agent bootstrapping to confirm installed version and available tools.
+
+### 3. Direct CLI Calls
+
+All tools emit structured JSON — agents parse it, no server needed:
+
+```bash
+# Zero-config quality gate (auto-loads .quality.toml)
+codemetrics check . --format json
+
+# Individual tools
+codemetrics crap ./src --recursive --format json
+codemetrics debt ./src --recursive --format json
+codemetrics riskmap . --format json
+
+# Full batch audit
+codemetrics run . --format sarif > results.sarif
+```
+
+### Agent-Specific Setup
+
+**Claude Code / Codex** — `CLAUDE.md` at the repo root is loaded automatically. No setup needed.
+
+**OpenCode** — `AGENTS.md` at the repo root is loaded automatically. No setup needed.
+
+**Hermes** — install the skill:
+
+```bash
+cp -r hermes/ ~/.hermes/skills/codemetrics
+```
+
+The skill references `docs/utcp/codemetrics.json` directly and calls the CLI. See `hermes/SKILL.md` for full documentation.
+
+---
+
+## MCP — GUI Client Compatibility Shim
+
+`codemetrics-server` wraps the CLI tools behind a JSON-RPC 2.0 / MCP interface. Use this **only** for GUI clients that have no native CLI tool support.
+
+```bash
+codemetrics-server --mode stdio   # for MCP clients
+codemetrics-server --mode tcp --port 9876   # for TCP clients
+```
+
+The server exposes the same 10 tools as UTCP but adds latency (subprocess-per-call). It supports both MCP `tools/call` and the legacy `tools/run` method for backward compatibility.
+
+### Claude Desktop
+
+`~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "codemetrics": {
+      "command": "codemetrics-server",
+      "args": ["--mode", "stdio"]
+    }
+  }
+}
+```
+
+### Cursor
+
+`.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "codemetrics": {
+      "command": "codemetrics-server",
+      "args": ["--mode", "stdio"]
+    }
+  }
+}
+```
+
+### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "codemetrics": {
+      "command": "codemetrics-server",
+      "args": ["--mode", "stdio"]
+    }
+  }
+}
+```
+
+---
 
 ## Tool Reference
 
-| Tool | Purpose | CRAP Command | Output |
-|------|---------|-------------|-------|
-| `crap` | Risk scores | `cargo run -p crap-metric -- ./src --recursive` | JSON |
-| `mutate` | Test codemetrics | `cargo run -p mutation-test -- . -p pkg --max 5` | JSON |
-| `debt` | TODOs/FIXMEs | `cargo run -p debt-scan -- ./src --recursive` | JSON |
-| `riskmap` | Risk files | `cargo run -p risk-map -- .` | JSON |
-| `doccov` | Doc coverage | `cargo run -p doc-coverage -- ./src --recursive` | JSON |
-| `taint` | Security | `cargo run -p taint-scan -- ./src --recursive` | JSON |
-| `coupling` | Dependencies | `cargo run -p coupling -- .` | JSON |
-| `dupfind` | Duplication | `cargo run -p duplication -- ./src --recursive` | JSON |
-| `fuzz` | Fuzzable | `cargo run -p fuzz-surface -- ./src --recursive` | JSON |
-| `codemetrics` | Full audit | `cargo run -p codemetrics-cli -- run . --format sarif` | SARIF |
+| Command | Purpose | Output |
+|---------|---------|--------|
+| `codemetrics init` | Detect ecosystem, write `.quality.toml` | text |
+| `codemetrics init --ci` | Full CI bootstrap (GHA + hook + baseline) | text |
+| `codemetrics check . --format json` | All checks, auto-loads `.quality.toml` | JSON |
+| `codemetrics run . --format sarif` | Full 10-tool batch audit | SARIF/JSON |
+| `codemetrics crap ./src --recursive` | CRAP risk scores | JSON |
+| `codemetrics mutate . -p pkg --max-mutants 5` | Mutation testing | JSON |
+| `codemetrics debt ./src --recursive` | TODOs/FIXMEs | JSON |
+| `codemetrics riskmap .` | Risk files (churn × complexity) | JSON |
+| `codemetrics doccov ./src --recursive` | Doc coverage | JSON |
+| `codemetrics taint ./src --recursive` | Security taint | JSON |
+| `codemetrics coupling .` | Module dependencies | JSON |
+| `codemetrics dupfind ./src --recursive` | Code duplication | JSON |
+| `codemetrics fuzz ./src --recursive` | Fuzz surface | JSON |
+| `codemetrics watch . --no-tests` | Live metrics watch loop | text |
+| `codemetrics install-hooks --fast` | Lightweight pre-commit hook | text |
 
 ## CI/CD Integration
 
 ### GitHub Actions
 
+```bash
+codemetrics init --ci   # auto-generates workflow + pre-commit hook + baseline SARIF
+```
+
+Or add manually:
+
 ```yaml
 - name: Quality Audit
-  run: |
-    cargo build --release
-    codemetrics run . --format sarif > results.sarif
+  run: codemetrics run . --format sarif > results.sarif
 - name: Upload SARIF
   uses: github/codeql-action/upload-sarif@v3
   with:
@@ -138,33 +185,14 @@ for tool in manual["tools"]:
 ### Pre-commit Hook
 
 ```bash
-# Run quick_checks before commit
-cargo run -p debt-scan -- ./src --recursive
-cargo run -p crap-metric -- ./src --recursive --min-score 20
+codemetrics install-hooks        # full hook (tests + coverage + check)
+codemetrics install-hooks --fast # lightweight (metrics only)
 ```
 
 ## See Also
 
 - [UTCP Specification](https://github.com/universal-tool-calling-protocol/utcp-specification)
-- [CodeMetrics Repository](https://github.com/KidIkaros/codemetrics)
-- `utcps/CodeMetrics.json` - Tool definitions
-- `CLAUDE.md` - Claude Code rules
-- `AGENTS.md` - OpenCode rules
-- `hermes/SKILL.md` - Hermes Agent skill
-
-### Hermes Agent
-
-Install skill locally for use with Hermes:
-
-```bash
-# Copy skill to Hermes skills directory
-cp -r hermes/ ~/.hermes/skills/CodeMetrics
-```
-
-Or reference directly from project when loading:
-- Hermes will auto-discover CodeMetrics when in `~/.hermes/skills/`
-
-Skill features:
-- Automatic terminal tool passthrough
-- Code execution support via `execute_code`
-- Platform: macOS, Linux
+- `docs/utcp/codemetrics.json` — UTCP manifest (all tools, schemas, call syntax)
+- `CLAUDE.md` — Claude Code / Codex context (repo root)
+- `AGENTS.md` — OpenCode / agentic harness context (repo root)
+- `hermes/SKILL.md` — Hermes Agent skill definition

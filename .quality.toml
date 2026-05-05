@@ -1,0 +1,31 @@
+# .quality.toml — CodeMetrics quality thresholds
+# Auto-generated for: Rust
+# Used by: codemetrics check . and codemetrics run .
+# Run `codemetrics init` at any time to regenerate with updated detection.
+
+[project]
+ecosystem = "Rust"
+test_cmd = ["cargo","test"]
+coverage_cmd = ["cargo","llvm-cov","--lcov","--output-path","lcov.info"]
+lcov_path = "lcov.info"
+
+[crap]
+# CRAP = complexity^2 * (1 - coverage)^3 + complexity. Lower is better.
+max_avg = 15
+
+[debt]
+max_markers = 0
+types = ["TODO", "FIXME", "HACK", "XXX"]
+
+[doc_coverage]
+min_pct = 95
+
+[complexity]
+max_violations = 0
+
+[duplication]
+max_duplicates = 0
+min_lines = 3
+
+[skip]
+checks = []

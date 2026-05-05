@@ -6,7 +6,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange)](https://rust-lang.org)
 [![License](https://img.shields.io/badge/License-Apache--2.0%20%7C%20OPL--1.1-blue)](LICENSE)
 
-**Production-grade code quality auditing** — ten specialized analysis engines unified under a single CLI, designed for CI/CD gatekeeping and autonomous AI agent integration.
+**Production-grade code quality, security, and compliance auditing** — 21 specialized analysis engines unified under a single CLI, designed for CI/CD gatekeeping and autonomous AI agent integration.
 
 ---
 
@@ -31,7 +31,13 @@ Built in Rust with zero external runtime dependencies, designed from the start f
 
 ---
 
-## Ten Engine Suite
+## 21-Check Engine Suite
+
+**Quality** — crap · debt · doccov · riskmap · dupfind · coupling · complexity · linelen · halstead · deadcode · cohesion · comments · propcov · typecov · fuzz · mutate
+
+**Security** — secrets · taint · errhandle · vulnscan · sast · crypto
+
+**Compliance** — licenses · sbom
 
 | Engine | Promise | Output |
 |---|---|---|
@@ -41,12 +47,23 @@ Built in Rust with zero external runtime dependencies, designed from the start f
 | **riskmap** | Churn × complexity hot spot identification | Ranked file list |
 | **doccov** | Public API documentation coverage | Module-level % |
 | **taint** | Sensitive data flow tracing (secrets, logs) | Paths with source→sink |
+| **secrets** | Hardcoded credential detection | File + line findings |
+| **sast** | SAST: SQLi, XSS, path traversal, command injection | Severity-ranked findings |
+| **crypto** | Weak crypto: MD5/SHA1, ECB, hardcoded IVs, insecure random | Rule violations |
+| **vulnscan** | Known CVE audit via cargo-audit / pip-audit | CVE list with CVSS |
+| **errhandle** | Unhandled error / swallowed exception patterns | Violation count |
+| **licenses** | OSS license compliance (GPL/AGPL deny-list) | Package classifications |
+| **sbom** | SBOM generation (CycloneDX 1.4 / SPDX 2.3) | XML or text manifest |
 | **fuzz** | Fuzzable entry point detection | Fuzzability scores |
 | **coupling** | Dependency analysis (cycles, fan-in/out) | Coupling matrix |
 | **dupfind** | AST-based duplication detection | Duplicate blocks |
 | **propcov** | Property test coverage | Coverage % |
+| **deadcode** | Unused symbols and unreachable branches | Finding count |
+| **linelen** | Line length violations | Violation count |
+| **complexity** | Cyclomatic complexity violations | Function list |
+| **outdated** | Direct deps ≥1 major version behind latest (via cargo-outdated) | Stale package list |
 
-Invoke individually (`codemetrics crap src/`) or run the full battery (`codemetrics run .`).
+Invoke individually (`codemetrics crap src/`) or run the full battery (`codemetrics check .`).
 
 ---
 
@@ -76,23 +93,25 @@ Invoke individually (`codemetrics crap src/`) or run the full battery (`codemetr
 git clone https://github.com/KidIkaros/codemetrics.git
 cd codemetrics
 cargo build --release
+export PATH="$PWD/target/release:$PATH"
 
-# 1. Setup your environment and verify requirements
-./target/release/codemetrics setup
+# 1. Auto-detect your ecosystem and write .quality.toml
+codemetrics init
 
-# 2. Run the full 10-tool CI gate with pass/fail thresholds
-./target/release/codemetrics check . \
-    --max-crap 70 \
-    --max-fuzz-risk 200 \
-    --min-doc 50
+# 2. Run all 21 checks against your project (auto-loads thresholds)
+codemetrics check .
 
-# 3. Batch run all tools and export to JSON for autonomous agent parsing
-./target/release/codemetrics run . --format json --output report.json
+# 3. Generate a visual HTML audit report
+codemetrics report . --open
+
+# 4. Wire GitHub Actions + pre-commit hook (optional, one-time)
+codemetrics init --ci
 ```
 
-Install from crates.io when published:
+Or install directly:
 ```bash
-cargo install codemetrics-cli
+cargo install --path crates/codemetrics-cli
+cargo install --path crates/codemetrics-server  # optional MCP server
 ```
 
 ---
@@ -101,9 +120,11 @@ cargo install codemetrics-cli
 
 - **Pre-commit quality gate** — fail PRs if `crap` threshold exceeded or mutation score drops
 - **Refactoring prioritization** — `riskmap` pinpoints files with highest change-complexity risk
-- **Security audit** — `taint` traces credential leakage paths across language boundaries
+- **Security audit** — `--only sast,secrets,crypto,taint` runs the security subset in seconds
 - **Documentation audit** — `doccov` surfaces undocumented public APIs before release
 - **Test strength assessment** — `mutate` measures defect detection capability beyond coverage numbers
+- **Snapshot comparison** — `codemetrics diff before.json after.json` shows regressions and fixes between any two check runs
+- **CI integration** — `codemetrics check . --ci` outputs JSON, disables colors/progress, exits 1 on failure
 
 ---
 
@@ -111,7 +132,7 @@ cargo install codemetrics-cli
 
 CodeMetrics ships with **Hermes Agent skill definitions** under `hermes/`. Each skill wraps a tool, parses structured results, and exposes thresholds for autonomous operation.
 
-See [`docs/agents/AGENTS.md`](docs/agents/AGENTS.md) for the skill catalog and usage patterns.
+See [`AGENTS.md`](AGENTS.md) for the skill catalog and usage patterns.
 
 ---
 
@@ -122,9 +143,13 @@ See [`docs/agents/AGENTS.md`](docs/agents/AGENTS.md) for the skill catalog and u
 | **JSON** | Structured parsing, agent workflows |
 | **NDJSON** | Streaming pipelines, log aggregation |
 | **SARIF** | GitHub Security tab, static analysis tooling ecosystem |
+| **HTML** | Visual audit report with health score, drill-downs, remediation checklist |
+| **Markdown** | Readable report for PRs and wikis |
+| **PDF** | Printable report via headless Chrome/Chromium |
 | **Human** | Terminal review (default) |
 
-All tools accept `--format <json\|ndjson\|sarif\|text>`.
+All tools accept `--format <json|ndjson|sarif|text>`.  
+Reports: `codemetrics report . --format <html|markdown|pdf> [--open]`.
 
 ---
 
@@ -133,7 +158,7 @@ All tools accept `--format <json\|ndjson\|sarif\|text>`.
 | Status | Detail |
 |---|---|
 | Current Release | Stable v1.0.0 |
-| CI Pipeline | ✅ All 10 tools green |
+| CI Pipeline | ✅ All 21 checks green |
 | Schema Validation | ✅ JSON schemas published in `schemas/` |
 | Test Suite | `cargo test` — workspace-wide passing (2 known flaky edge cases ignored) |
 | Self-Hosting | Runs on its own codebase continuously |

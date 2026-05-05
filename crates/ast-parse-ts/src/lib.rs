@@ -606,7 +606,7 @@ fn has_doc_comment_before(source: &str, line: usize, lang: Language) -> bool {
     let lines: Vec<&str> = source.lines().collect();
     // Look at up to 5 lines above the node start (attributes like #[derive] may sit between)
     let start = line.saturating_sub(5);
-    for prev in (start..line - 1).rev() {
+    for prev in (start..line.saturating_sub(1)).rev() {
         let trimmed = lines.get(prev).map(|l| l.trim()).unwrap_or("");
         if trimmed.is_empty() {
             continue;

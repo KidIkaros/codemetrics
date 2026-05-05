@@ -8,6 +8,7 @@ fn mutate_cmd() -> Command {
 }
 
 #[test]
+#[ignore = "runs cargo test on the workspace — slow, run with --ignored"]
 fn test_verify_original_tests() {
     // Mutation tester should verify tests pass on original code first
     mutate_cmd()
@@ -23,6 +24,7 @@ fn test_verify_original_tests() {
 }
 
 #[test]
+#[ignore = "runs cargo test on the workspace — slow, run with --ignored"]
 fn test_json_output_with_zero_mutants() {
     mutate_cmd()
         .arg(TEST_PROJECT)

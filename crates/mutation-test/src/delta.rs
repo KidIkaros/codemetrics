@@ -42,6 +42,17 @@ pub fn get_changed_files(repo_root: &Path, base_ref: &str) -> Vec<String> {
     }
 }
 
+/// Extract the b-side `.rs` file path from a `diff --git a/... b/...` header line.
+fn extract_diff_file(line: &str) -> Option<String> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    let b_path = parts.get(3)?;
+    if b_path.starts_with("b/") && b_path.ends_with(".rs") {
+        Some(b_path[2..].to_string())
+    } else {
+        None
+    }
+}
+
 /// Parse git diff output to extract changed line ranges per file.
 pub fn get_changed_lines(repo_root: &Path, base_ref: &str) -> Vec<ChangedRegion> {
     let output = Command::new("git")
@@ -59,16 +70,8 @@ pub fn get_changed_lines(repo_root: &Path, base_ref: &str) -> Vec<ChangedRegion>
 
     for line in diff_text.lines() {
         if line.starts_with("diff --git ") {
-            // Extract file path from "diff --git a/path b/path"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 {
-                let b_path = parts[3];
-                if b_path.starts_with("b/") && b_path.ends_with(".rs") {
-                    current_file = Some(b_path[2..].to_string());
-                }
-            }
+            current_file = extract_diff_file(line);
         } else if line.starts_with("@@") {
-            // Parse hunk header: @@ -old_start,old_count +new_start,new_count @@
             if let Some(ref file) = current_file {
                 if let Some(range) = parse_hunk_header(line) {
                     regions.push(ChangedRegion {
@@ -108,54 +111,55 @@ fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
     Some((start, start + count.saturating_sub(1)))
 }
 
-/// Scan source code to find all function definitions and their line ranges.
-/// Returns HashMap<function_name, (start_line, end_line)>.
-pub fn find_function_ranges(source: &str) -> HashMap<String, (usize, usize)> {
-    let mut functions = HashMap::new();
-    let mut current_fn: Option<(String, usize)> = None;
-    let mut brace_depth = 0;
-    let mut line_num = 0;
-
-    for line in source.lines() {
-        line_num += 1;
-        let trimmed = line.trim();
-
-        // Detect function signature
-        let is_signature = (trimmed.starts_with("pub fn ")
+/// Return true if the trimmed line looks like the start of a Rust function signature.
+fn is_fn_signature(trimmed: &str) -> bool {
+    trimmed.contains('(') &&
+        (trimmed.starts_with("pub fn ")
             || trimmed.starts_with("fn ")
             || trimmed.starts_with("pub async fn ")
             || trimmed.starts_with("async fn ")
             || trimmed.starts_with("pub unsafe fn ")
             || trimmed.starts_with("unsafe fn "))
-            && trimmed.contains('(');
+}
+
+/// Extract the function name from a trimmed fn-signature line.
+fn extract_fn_name(trimmed: &str) -> Option<&str> {
+    let rest = &trimmed[trimmed.find("fn ")? + 3..];
+    let end = rest.find(|c: char| c == '(' || c.is_whitespace())?;
+    let name = rest[..end].trim();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// Count net open braces on a line (`{` minus `}`).
+fn net_braces(trimmed: &str) -> isize {
+    trimmed.matches('{').count() as isize - trimmed.matches('}').count() as isize
+}
+
+/// Scan source code to find all function definitions and their line ranges.
+/// Returns HashMap<function_name, (start_line, end_line)>.
+pub fn find_function_ranges(source: &str) -> HashMap<String, (usize, usize)> {
+    let mut functions = HashMap::new();
+    let mut current_fn: Option<(String, usize)> = None;
+    let mut brace_depth: isize = 0;
+    let mut line_num = 0;
+
+    for line in source.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+        let is_signature = is_fn_signature(trimmed);
 
         if is_signature {
-            // Try to extract function name
-            let after_fn = trimmed.find("fn ").map(|i| &trimmed[i + 3..]);
-            if let Some(rest) = after_fn {
-                let name_end = rest.find(|c: char| c == '(' || c.is_whitespace());
-                if let Some(end) = name_end {
-                    let name = rest[..end].trim();
-                    if !name.is_empty() {
-                        current_fn = Some((name.to_string(), line_num));
-                        // Start fresh brace count for this line only
-                        brace_depth = trimmed
-                            .matches('{')
-                            .count()
-                            .saturating_sub(trimmed.matches('}').count());
-                    }
-                }
+            if let Some(name) = extract_fn_name(trimmed) {
+                current_fn = Some((name.to_string(), line_num));
+                brace_depth = net_braces(trimmed);
             }
         }
 
         if current_fn.is_some() {
-            // Only count braces if this is NOT the signature line (already counted above)
             if !is_signature {
-                brace_depth += trimmed.matches('{').count();
-                brace_depth = brace_depth.saturating_sub(trimmed.matches('}').count());
+                brace_depth += net_braces(trimmed);
             }
-
-            if brace_depth == 0 {
+            if brace_depth <= 0 {
                 if let Some((name, start)) = current_fn.take() {
                     functions.insert(name, (start, line_num));
                 }
@@ -200,6 +204,35 @@ pub fn map_changed_to_functions(
     result
 }
 
+/// Return true if `item` contains a call to `callee`.
+fn line_calls(item: &str, callee: &str) -> bool {
+    item.contains(&format!("{}(", callee))
+        || item.contains(&format!(" {}(", callee))
+        || item.contains(&format!("{}::", callee))
+        || item.contains(&format!("&mut {}", callee))
+}
+
+/// Collect callees of `fn_name` appearing in the function body lines.
+fn collect_callees(
+    fn_name: &str,
+    body_lines: &[&str],
+    all_fns: &HashMap<String, (usize, usize)>,
+) -> HashSet<String> {
+    let mut callees = HashSet::new();
+    for line in body_lines {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") || trimmed.starts_with("let ") {
+            continue;
+        }
+        for other in all_fns.keys() {
+            if other != fn_name && line_calls(line, other) {
+                callees.insert(other.clone());
+            }
+        }
+    }
+    callees
+}
+
 /// Build a simple call graph: for each function, which functions does it call?
 pub fn build_call_graph(source_files: &[(String, String)]) -> HashMap<String, HashSet<String>> {
     let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
@@ -209,38 +242,43 @@ pub fn build_call_graph(source_files: &[(String, String)]) -> HashMap<String, Ha
         let lines: Vec<&str> = source.lines().collect();
 
         for (fn_name, (start, end)) in &functions {
-            let callers = graph.entry(fn_name.clone()).or_default();
-
-            // Scan lines within this function for calls to other functions
-            // Note: end is inclusive, so we iterate through end (exclusive range goes to end)
-            for item in lines.iter().take(*end).skip(start.saturating_sub(1)) {
-                let trimmed = item.trim();
-
-                // Skip comments and local let bindings (but not fn bodies on same line)
-                if trimmed.starts_with("//") || trimmed.starts_with("let ") {
-                    continue;
-                }
-
-                for other_name in functions.keys() {
-                    if other_name == fn_name {
-                        continue;
-                    }
-                    // Look for function call patterns
-                    let call_patterns = [
-                        format!("{}(", other_name),
-                        format!(" {}(", other_name),
-                        format!("{}::", other_name),
-                        format!("&mut {}", other_name),
-                    ];
-                    if call_patterns.iter().any(|p| item.contains(p)) {
-                        callers.insert(other_name.clone());
-                    }
-                }
-            }
+            let body = &lines[start.saturating_sub(1)..*end.min(&lines.len())];
+            let callees = collect_callees(fn_name, body, &functions);
+            graph.entry(fn_name.clone()).or_default().extend(callees);
         }
     }
 
     graph
+}
+
+/// Build reverse call graph: callee -> set of callers.
+fn reverse_call_graph(
+    call_graph: &HashMap<String, HashSet<String>>,
+) -> HashMap<String, HashSet<String>> {
+    let mut reverse: HashMap<String, HashSet<String>> = HashMap::new();
+    for (caller, callees) in call_graph {
+        for callee in callees {
+            reverse.entry(callee.clone()).or_default().insert(caller.clone());
+        }
+    }
+    reverse
+}
+
+/// Transitively expand a set of seed functions via a reverse call graph.
+fn transitive_callers(
+    seeds: &[String],
+    reverse: &HashMap<String, HashSet<String>>,
+) -> HashSet<String> {
+    let mut all = HashSet::new();
+    let mut queue: Vec<String> = seeds.to_vec();
+    while let Some(func) = queue.pop() {
+        if all.insert(func.clone()) {
+            if let Some(callers) = reverse.get(&func) {
+                queue.extend(callers.iter().cloned());
+            }
+        }
+    }
+    all
 }
 
 /// Get the transitive closure of affected functions (changed + all callers).
@@ -248,38 +286,14 @@ pub fn get_affected_functions(
     changed_functions: &HashMap<String, Vec<String>>,
     call_graph: &HashMap<String, HashSet<String>>,
 ) -> HashMap<String, Vec<String>> {
-    let mut affected = HashMap::new();
-
-    // Build reverse call graph: who calls whom
-    let mut reverse_graph: HashMap<String, HashSet<String>> = HashMap::new();
-    for (caller, callees) in call_graph {
-        for callee in callees {
-            reverse_graph
-                .entry(callee.clone())
-                .or_default()
-                .insert(caller.clone());
-        }
-    }
-
-    for (file, functions) in changed_functions {
-        let mut all_affected = HashSet::new();
-        let mut to_process: Vec<String> = functions.clone();
-
-        while let Some(func) = to_process.pop() {
-            if all_affected.insert(func.clone()) {
-                // Add all callers of this function
-                if let Some(callers) = reverse_graph.get(&func) {
-                    for caller in callers {
-                        to_process.push(caller.clone());
-                    }
-                }
-            }
-        }
-
-        affected.insert(file.clone(), all_affected.into_iter().collect());
-    }
-
-    affected
+    let reverse = reverse_call_graph(call_graph);
+    changed_functions
+        .iter()
+        .map(|(file, fns)| {
+            let all = transitive_callers(fns, &reverse);
+            (file.clone(), all.into_iter().collect())
+        })
+        .collect()
 }
 
 /// Check if a line is within any of the given function names in a file.
