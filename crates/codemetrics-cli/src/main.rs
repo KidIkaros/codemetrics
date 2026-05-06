@@ -4,11 +4,125 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use tracing::info;
 
 use ast_parse_ts::{parse_complexity_file, parse_doc_coverage_file, Language};
 use codemetrics_common::memory::MemoryMonitor;
 use codemetrics_common::{crap_score, parse_lcov, CoverageRecord};
 use codemetrics_common::{find_source_files, ToolResult};
+
+// Config struct for .quality.toml
+#[derive(Debug, Deserialize)]
+struct Config {
+    project: Option<ProjectConfig>,
+    crap: Option<CrapConfig>,
+    debt: Option<DebtConfig>,
+    doc: Option<DocConfig>,
+    complexity: Option<ComplexityConfig>,
+    taint: Option<TaintConfig>,
+    duplication: Option<DuplicationConfig>,
+    risk: Option<RiskConfig>,
+    coupling: Option<CouplingConfig>,
+    mutation: Option<MutationConfig>,
+    security: Option<SecurityConfig>,
+    secrets: Option<SecretsConfig>,
+    licenses: Option<LicensesConfig>,
+    dead_code: Option<DeadCodeConfig>,
+    type_coverage: Option<TypeCoverageConfig>,
+    halstead: Option<HalsteadConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectConfig {
+    ecosystem: Option<String>,
+    test_cmd: Option<String>,
+    coverage_cmd: Option<String>,
+    lcov_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CrapConfig {
+    threshold: Option<f64>,
+    warn_at: Option<f64>,
+    max_avg: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DebtConfig {
+    max_items: Option<usize>,
+    max_markers: Option<usize>,
+    types: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DocConfig {
+    min_coverage: Option<f64>,
+    min_pct: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ComplexityConfig {
+    max_violations: Option<usize>,
+    threshold: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaintConfig {
+    max_findings: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DuplicationConfig {
+    max_duplication: Option<f64>,
+    max_duplicates: Option<f64>,
+    min_lines: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RiskConfig {
+    max_score: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CouplingConfig {
+    max_coupling: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MutationConfig {
+    min_score: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SecurityConfig {
+    max_vulnerabilities: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SecretsConfig {
+    max_findings: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LicensesConfig {
+    deny: Option<Vec<String>>,
+    allow: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeadCodeConfig {
+    max_findings: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TypeCoverageConfig {
+    min_coverage: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HalsteadConfig {
+    max_bug_estimate: Option<f64>,
+}
 
 // ═══════════════════════════════════════════
 // PROGRESS / SPINNER
@@ -56,7 +170,14 @@ struct Bar {
 impl Bar {
     fn new(total: usize) -> Self {
         let tty = is_tty();
-        Self { total, done: 0, start: Instant::now(), tty, last_len: 0, current_tool: String::new() }
+        Self {
+            total,
+            done: 0,
+            start: Instant::now(),
+            tty,
+            last_len: 0,
+            current_tool: String::new(),
+        }
     }
 
     fn set_current(&mut self, tool: &str) {
@@ -66,7 +187,11 @@ impl Bar {
 
     fn advance(&mut self, tool: &str, passed: bool, duration_ms: u64) {
         self.done += 1;
-        let icon = if passed { "  ✓".green().bold() } else { "  ✗".red().bold() };
+        let icon = if passed {
+            "  ✓".green().bold()
+        } else {
+            "  ✗".red().bold()
+        };
         let name_col = if passed { tool.normal() } else { tool.red() };
         let dur_str = format_ms(duration_ms);
         if self.tty {
@@ -81,8 +206,14 @@ impl Bar {
     }
 
     fn render(&mut self) {
-        if !self.tty { return; }
-        let pct = if self.total > 0 { self.done * 100 / self.total } else { 0 };
+        if !self.tty {
+            return;
+        }
+        let pct = if self.total > 0 {
+            self.done * 100 / self.total
+        } else {
+            0
+        };
         let bar_width = 28usize;
         let filled = bar_width * self.done / self.total.max(1);
         let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
@@ -95,17 +226,29 @@ impl Bar {
             "ETA --:--".to_string()
         };
         let frame = SPINNER_FRAMES[self.done % SPINNER_FRAMES.len()];
-        let running = if self.current_tool.is_empty() { String::new() } else {
-            format!("  {} Running: {}  ({})", frame.cyan(), self.current_tool.bold(), format_elapsed(elapsed))
+        let running = if self.current_tool.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "  {} Running: {}  ({})",
+                frame.cyan(),
+                self.current_tool.bold(),
+                format_elapsed(elapsed)
+            )
         };
         let bar_line = format!(
             "  [{}/{}] {}  {}%   {}",
-            self.done, self.total,
+            self.done,
+            self.total,
             bar.cyan(),
             pct,
             eta_str.bright_black()
         );
-        eprint!("\r{:<width$}", bar_line, width = self.last_len.max(bar_line.len()));
+        eprint!(
+            "\r{:<width$}",
+            bar_line,
+            width = self.last_len.max(bar_line.len())
+        );
         self.last_len = bar_line.len();
         if !running.is_empty() {
             eprint!("\n{}", running);
@@ -161,7 +304,9 @@ fn strip_ansi(s: &str) -> String {
                 chars.next();
                 // consume until a letter
                 for ch in chars.by_ref() {
-                    if ch.is_ascii_alphabetic() { break; }
+                    if ch.is_ascii_alphabetic() {
+                        break;
+                    }
                 }
             }
         } else {
@@ -174,32 +319,55 @@ fn strip_ansi(s: &str) -> String {
 /// Print a box row padding `content` to `inner_width` visible chars.
 fn box_row(content: &str, inner_width: usize) {
     let vlen = visible_len(content);
-    let padding = if inner_width > vlen { inner_width - vlen } else { 0 };
+    let padding = if inner_width > vlen {
+        inner_width - vlen
+    } else {
+        0
+    };
     eprintln!("  ║  {}{}║", content, " ".repeat(padding));
 }
 
 /// Compute a weighted health score 0–100 and letter grade.
 /// Security failures penalise harder (×3), compliance (×2), quality (×1).
 fn health_score(checks: &[CheckResult]) -> (u32, char) {
-    let security = ["secrets", "vulnscan", "taint", "errhandle", "sast", "crypto"];
+    let security = [
+        "secrets",
+        "vulnscan",
+        "taint",
+        "errhandle",
+        "sast",
+        "crypto",
+    ];
     let compliance = ["licenses", "sbom"];
-    if checks.is_empty() { return (100, 'A'); }
+    if checks.is_empty() {
+        return (100, 'A');
+    }
     let mut weighted_pass = 0u32;
     let mut weighted_total = 0u32;
     for c in checks {
-        let w = if security.contains(&c.name.as_str()) { 3 }
-                else if compliance.contains(&c.name.as_str()) { 2 }
-                else { 1 };
+        let w = if security.contains(&c.name.as_str()) {
+            3
+        } else if compliance.contains(&c.name.as_str()) {
+            2
+        } else {
+            1
+        };
         weighted_total += w;
-        if c.passed { weighted_pass += w; }
+        if c.passed {
+            weighted_pass += w;
+        }
     }
-    let score = if weighted_total == 0 { 100 } else { weighted_pass * 100 / weighted_total };
+    let score = if weighted_total == 0 {
+        100
+    } else {
+        weighted_pass * 100 / weighted_total
+    };
     let grade = match score {
         90..=100 => 'A',
-        80..=89  => 'B',
-        65..=79  => 'C',
-        50..=64  => 'D',
-        _        => 'F',
+        80..=89 => 'B',
+        65..=79 => 'C',
+        50..=64 => 'D',
+        _ => 'F',
     };
     (score, grade)
 }
@@ -209,13 +377,25 @@ fn health_score(checks: &[CheckResult]) -> (u32, char) {
 fn extract_offenders(check: &CheckResult, limit: usize) -> Vec<(String, Option<u64>, String)> {
     let mut out = Vec::new();
     // Try common keys: items, functions, findings
-    let arrays = ["items", "functions", "findings", "violations", "secrets", "duplicates"];
+    let arrays = [
+        "items",
+        "functions",
+        "findings",
+        "violations",
+        "secrets",
+        "duplicates",
+    ];
     for key in &arrays {
         if let Some(arr) = check.details.get(key).and_then(|v| v.as_array()) {
             for item in arr.iter().take(limit) {
-                let file = item.get("file").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let file = item
+                    .get("file")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let line = item.get("line").and_then(|v| v.as_u64());
-                let desc = item.get("context")
+                let desc = item
+                    .get("context")
                     .or_else(|| item.get("kind"))
                     .or_else(|| item.get("name"))
                     .or_else(|| item.get("type"))
@@ -227,7 +407,9 @@ fn extract_offenders(check: &CheckResult, limit: usize) -> Vec<(String, Option<u
                     out.push((file, line, desc));
                 }
             }
-            if !out.is_empty() { break; }
+            if !out.is_empty() {
+                break;
+            }
         }
     }
     out
@@ -236,15 +418,23 @@ fn extract_offenders(check: &CheckResult, limit: usize) -> Vec<(String, Option<u
 /// Print inline offenders under a check line (used by run_check! for failures).
 fn print_offenders(check: &CheckResult) {
     let offenders = extract_offenders(check, 5);
-    if offenders.is_empty() { return; }
+    if offenders.is_empty() {
+        return;
+    }
     for (file, line, desc) in &offenders {
         let loc = match line {
             Some(l) => format!("{}:{}", file, l),
             None if file.is_empty() => String::new(),
             None => file.clone(),
         };
-        if loc.is_empty() && desc.is_empty() { continue; }
-        let truncated_desc = if desc.len() > 60 { format!("{}…", &desc[..60]) } else { desc.clone() };
+        if loc.is_empty() && desc.is_empty() {
+            continue;
+        }
+        let truncated_desc = if desc.len() > 60 {
+            format!("{}…", &desc[..60])
+        } else {
+            desc.clone()
+        };
         if loc.is_empty() {
             eprintln!("      {}", truncated_desc.bright_black());
         } else {
@@ -252,21 +442,43 @@ fn print_offenders(check: &CheckResult) {
         }
     }
     // Count total items to show "… N more"
-    let arrays = ["items", "functions", "findings", "violations", "secrets", "duplicates"];
+    let arrays = [
+        "items",
+        "functions",
+        "findings",
+        "violations",
+        "secrets",
+        "duplicates",
+    ];
     for key in &arrays {
         if let Some(arr) = check.details.get(key).and_then(|v| v.as_array()) {
             if arr.len() > 5 {
-                eprintln!("      {}", format!("… {} more", arr.len() - 5).bright_black());
+                eprintln!(
+                    "      {}",
+                    format!("… {} more", arr.len() - 5).bright_black()
+                );
             }
             break;
         }
     }
 }
 
-fn print_summary_box(kind: &str, passed: bool, path: &str, passed_count: usize, total: usize, elapsed: std::time::Duration, checks: &[CheckResult]) {
+fn print_summary_box(
+    kind: &str,
+    passed: bool,
+    path: &str,
+    passed_count: usize,
+    total: usize,
+    elapsed: std::time::Duration,
+    checks: &[CheckResult],
+) {
     let (score, grade) = health_score(checks);
     let status_plain = if passed { "PASSED ✓" } else { "FAILED ✗" };
-    let status = if passed { status_plain.green().bold().to_string() } else { status_plain.red().bold().to_string() };
+    let status = if passed {
+        status_plain.green().bold().to_string()
+    } else {
+        status_plain.red().bold().to_string()
+    };
     let grade_col = match grade {
         'A' => grade.to_string().green().bold().to_string(),
         'B' => grade.to_string().cyan().bold().to_string(),
@@ -274,8 +486,17 @@ fn print_summary_box(kind: &str, passed: bool, path: &str, passed_count: usize, 
         _ => grade.to_string().red().bold().to_string(),
     };
     let score_str = format!("Score: {}/100  {}", score, grade_col);
-    let checks_str = format!("{}/{} checks passed  ·  {} total", passed_count, total, format_elapsed(elapsed));
-    let checks_col = if passed { checks_str.green().to_string() } else { checks_str.red().to_string() };
+    let checks_str = format!(
+        "{}/{} checks passed  ·  {} total",
+        passed_count,
+        total,
+        format_elapsed(elapsed)
+    );
+    let checks_col = if passed {
+        checks_str.green().to_string()
+    } else {
+        checks_str.red().to_string()
+    };
     let inner = 50usize;
     let border = "═".repeat(inner + 2);
     let title = format!("{}  ·  {}", kind, status);
@@ -314,7 +535,9 @@ where
         let mut frame = 0usize;
         let mut last_len = 0usize;
         loop {
-            if done_clone.load(Ordering::Relaxed) { break; }
+            if done_clone.load(Ordering::Relaxed) {
+                break;
+            }
             let f = SPINNER_FRAMES[frame % SPINNER_FRAMES.len()];
             frame += 1;
             let elapsed = format_elapsed(start.elapsed());
@@ -498,8 +721,14 @@ fn detect_project(root: &str) -> ProjectProfile {
         coverage_cmd: Vec::new(),
         lcov_path: String::new(),
         watch_extensions: vec![
-            "rs".into(), "py".into(), "js".into(), "ts".into(),
-            "go".into(), "java".into(), "cpp".into(), "c".into(),
+            "rs".into(),
+            "py".into(),
+            "js".into(),
+            "ts".into(),
+            "go".into(),
+            "java".into(),
+            "cpp".into(),
+            "c".into(),
         ],
         max_crap: 30.0,
         min_doc: 50.0,
@@ -1350,9 +1579,11 @@ fn check_complexity(
 // ═══════════════════════════════════════════
 
 fn output_json(report: &CheckReport) {
-    println!("{}", serde_json::to_string_pretty(report).unwrap());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(report).expect("Failed to serialize report to JSON")
+    );
 }
-
 
 // ═══════════════════════════════════════════
 // CONFIG
@@ -1405,159 +1636,124 @@ checks = []
 }
 
 /// Load thresholds from `.quality.toml` if present, falling back to `defaults`.
-/// Parsing is intentionally line-by-line to avoid pulling in a TOML dependency.
+/// Uses the toml crate for proper TOML parsing.
 fn load_config_thresholds(
     config_path: &str,
-    defaults: (f64, f64, usize, usize, f64, usize, f64, usize, f64, usize, usize, f64, usize, usize, usize, f64, usize, f64, usize, usize, usize, usize, usize),
-) -> (f64, f64, usize, usize, f64, usize, f64, usize, f64, usize, usize, f64, usize, usize, usize, f64, usize, f64, usize, usize, usize, usize, usize) {
-    // defaults: (max_crap, min_doc, max_debt, max_complexity, max_duplication,
-    //            max_taint, max_risk, max_coupling, min_propcov, max_fuzz_risk,
-    //            max_linelen, max_halstead_bugs, max_secrets, max_deadcode,
-    //            max_cohesion, min_comment_ratio, max_errhandle,
-    //            min_typecov, max_vuln_critical, max_vuln_high,
-    //            max_sast, max_crypto, max_license_violations)
-    let Ok(content) = std::fs::read_to_string(config_path) else {
-        return defaults;
+    defaults: (
+        f64,
+        f64,
+        usize,
+        usize,
+        f64,
+        usize,
+        f64,
+        usize,
+        f64,
+        usize,
+        usize,
+        f64,
+        usize,
+        usize,
+        usize,
+        f64,
+        usize,
+        f64,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+    ),
+) -> (
+    f64,
+    f64,
+    usize,
+    usize,
+    f64,
+    usize,
+    f64,
+    usize,
+    f64,
+    usize,
+    usize,
+    f64,
+    usize,
+    usize,
+    usize,
+    f64,
+    usize,
+    f64,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+) {
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(_) => return defaults,
     };
-    let mut max_crap = defaults.0;
-    let mut min_doc = defaults.1;
-    let mut max_debt = defaults.2;
-    let mut max_complexity = defaults.3;
-    let mut max_duplication = defaults.4;
-    let mut max_taint = defaults.5;
-    let mut max_risk = defaults.6;
-    let mut max_coupling: usize = defaults.7;
-    let mut min_propcov = defaults.8;
-    let mut max_fuzz_risk: usize = defaults.9;
-    let mut max_linelen: usize = defaults.10;
-    let mut max_halstead_bugs = defaults.11;
-    let mut max_secrets: usize = defaults.12;
-    let mut max_deadcode: usize = defaults.13;
-    let mut max_cohesion: usize = defaults.14;
-    let mut min_comment_ratio = defaults.15;
-    let mut max_errhandle: usize = defaults.16;
-    let mut min_typecov = defaults.17;
-    let mut max_vuln_critical: usize = defaults.18;
-    let mut max_vuln_high: usize = defaults.19;
-    let mut max_sast: usize = defaults.20;
-    let mut max_crypto: usize = defaults.21;
-    let mut max_license_violations: usize = defaults.22;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        if let Some(val) = parse_toml_f64(line, "max_avg") {
-            max_crap = val;
-        }
-        if let Some(val) = parse_toml_f64(line, "min_pct") {
-            min_doc = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_markers") {
-            max_debt = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_violations") {
-            max_complexity = val;
-        }
-        if let Some(val) = parse_toml_f64(line, "max_duplicates") {
-            max_duplication = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_taint") {
-            max_taint = val;
-        }
-        if let Some(val) = parse_toml_f64(line, "max_risk") {
-            max_risk = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_coupling") {
-            max_coupling = val;
-        }
-        if let Some(val) = parse_toml_f64(line, "min_propcov") {
-            min_propcov = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_fuzz_risk") {
-            max_fuzz_risk = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_linelen") {
-            max_linelen = val;
-        }
-        if let Some(val) = parse_toml_f64(line, "max_halstead_bugs") {
-            max_halstead_bugs = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_secrets") {
-            max_secrets = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_deadcode") {
-            max_deadcode = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_cohesion") {
-            max_cohesion = val;
-        }
-        if let Some(val) = parse_toml_f64(line, "min_comment_ratio") {
-            min_comment_ratio = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_errhandle") {
-            max_errhandle = val;
-        }
-        if let Some(val) = parse_toml_f64(line, "min_typecov") {
-            min_typecov = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_vuln_critical") {
-            max_vuln_critical = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_vuln_high") {
-            max_vuln_high = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_sast") {
-            max_sast = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_crypto") {
-            max_crypto = val;
-        }
-        if let Some(val) = parse_toml_usize(line, "max_license_violations") {
-            max_license_violations = val;
-        }
-    }
+
+    let config: Config = match toml::from_str(&content) {
+        Ok(c) => c,
+        Err(_) => return defaults,
+    };
+
     (
-        max_crap,
-        min_doc,
-        max_debt,
-        max_complexity,
-        max_duplication,
-        max_taint,
-        max_risk,
-        max_coupling,
-        min_propcov,
-        max_fuzz_risk,
-        max_linelen,
-        max_halstead_bugs,
-        max_secrets,
-        max_deadcode,
-        max_cohesion,
-        min_comment_ratio,
-        max_errhandle,
-        min_typecov,
-        max_vuln_critical,
-        max_vuln_high,
-        max_sast,
-        max_crypto,
-        max_license_violations,
+        config.crap.and_then(|c| c.max_avg).unwrap_or(defaults.0),
+        config
+            .doc
+            .and_then(|c| c.min_pct.or(c.min_coverage))
+            .unwrap_or(defaults.1),
+        config
+            .debt
+            .and_then(|c| c.max_markers.or(c.max_items))
+            .unwrap_or(defaults.2),
+        config
+            .complexity
+            .and_then(|c| c.max_violations)
+            .unwrap_or(defaults.3),
+        config
+            .duplication
+            .and_then(|c| c.max_duplication.or(c.max_duplicates))
+            .unwrap_or(defaults.4),
+        config
+            .taint
+            .and_then(|c| c.max_findings)
+            .unwrap_or(defaults.5),
+        config.risk.and_then(|c| c.max_score).unwrap_or(defaults.6),
+        config
+            .coupling
+            .and_then(|c| c.max_coupling)
+            .unwrap_or(defaults.7),
+        0.0, // min_propcov - not in config yet
+        0,   // max_fuzz_risk - not in config yet
+        0,   // max_linelen - not in config yet
+        config
+            .halstead
+            .and_then(|c| c.max_bug_estimate)
+            .unwrap_or(defaults.11),
+        config
+            .secrets
+            .and_then(|c| c.max_findings)
+            .unwrap_or(defaults.12),
+        config
+            .dead_code
+            .and_then(|c| c.max_findings)
+            .unwrap_or(defaults.13),
+        0,   // max_cohesion - not in config yet
+        0.0, // min_comment_ratio - not in config yet
+        0,   // max_errhandle - not in config yet
+        0.0, // min_typecov - not in config yet
+        0,   // max_vuln_critical - not in config yet
+        0,   // max_vuln_high - not in config yet
+        0,   // max_sast - not in config yet
+        0,   // max_crypto - not in config yet
+        0,   // max_license_violations - not in config yet
     )
 }
 
-fn parse_toml_f64(line: &str, key: &str) -> Option<f64> {
-    let prefix = format!("{} =", key);
-    let prefix2 = format!("{}=", key);
-    let rest = if let Some(r) = line.strip_prefix(&prefix) {
-        r
-    } else {
-        line.strip_prefix(&prefix2)?
-    };
-    rest.split_whitespace().next()?.parse().ok()
-}
-
-fn parse_toml_usize(line: &str, key: &str) -> Option<usize> {
-    parse_toml_f64(line, key).map(|v| v as usize)
-}
+// TOML parsing functions removed - now using toml crate
 
 /// `codemetrics init --ci`: detect project, write config, install hook, write GHA workflow,
 /// seed baseline, record first history entry.
@@ -1568,7 +1764,12 @@ fn init_ci(config_path: &str, profile: &ProjectProfile) -> i32 {
     {
         let t = Instant::now();
         generate_config(config_path, profile);
-        eprintln!("  {} Wrote {}  ({})", "✓".green().bold(), config_path.cyan(), format_elapsed(t.elapsed()).bright_black());
+        eprintln!(
+            "  {} Wrote {}  ({})",
+            "✓".green().bold(),
+            config_path.cyan(),
+            format_elapsed(t.elapsed()).bright_black()
+        );
     }
 
     // 2. Install pre-commit hook
@@ -1576,9 +1777,16 @@ fn init_ci(config_path: &str, profile: &ProjectProfile) -> i32 {
         let t = Instant::now();
         let hook_result = install_hooks_impl(".", false, profile);
         if hook_result == 0 {
-            eprintln!("  {} Installed pre-commit hook  ({})", "✓".green().bold(), format_elapsed(t.elapsed()).bright_black());
+            eprintln!(
+                "  {} Installed pre-commit hook  ({})",
+                "✓".green().bold(),
+                format_elapsed(t.elapsed()).bright_black()
+            );
         } else {
-            eprintln!("  {} Could not install pre-commit hook (not a git repo?)", "!".yellow().bold());
+            eprintln!(
+                "  {} Could not install pre-commit hook (not a git repo?)",
+                "!".yellow().bold()
+            );
         }
     }
 
@@ -1587,15 +1795,30 @@ fn init_ci(config_path: &str, profile: &ProjectProfile) -> i32 {
         let t = Instant::now();
         let gha_dir = ".github/workflows";
         if let Err(e) = std::fs::create_dir_all(gha_dir) {
-            eprintln!("  {} Could not create {}: {}", "!".yellow().bold(), gha_dir, e);
+            eprintln!(
+                "  {} Could not create {}: {}",
+                "!".yellow().bold(),
+                gha_dir,
+                e
+            );
             ok = false;
         } else {
             let workflow_path = format!("{}/codemetrics.yml", gha_dir);
             let workflow = build_gha_workflow(profile);
             match std::fs::write(&workflow_path, workflow) {
-                Ok(_) => eprintln!("  {} Wrote {}  ({})", "✓".green().bold(), workflow_path.cyan(), format_elapsed(t.elapsed()).bright_black()),
+                Ok(_) => eprintln!(
+                    "  {} Wrote {}  ({})",
+                    "✓".green().bold(),
+                    workflow_path.cyan(),
+                    format_elapsed(t.elapsed()).bright_black()
+                ),
                 Err(e) => {
-                    eprintln!("  {} Could not write {}: {}", "!".yellow().bold(), workflow_path, e);
+                    eprintln!(
+                        "  {} Could not write {}: {}",
+                        "!".yellow().bold(),
+                        workflow_path,
+                        e
+                    );
                     ok = false;
                 }
             }
@@ -1651,14 +1874,33 @@ fn init_ci(config_path: &str, profile: &ProjectProfile) -> i32 {
     if ok {
         eprintln!("  {} Setup complete — CI is ready.", "✓".green().bold());
     } else {
-        eprintln!("  {} Setup completed with warnings. Check messages above.", "!".yellow().bold());
+        eprintln!(
+            "  {} Setup completed with warnings. Check messages above.",
+            "!".yellow().bold()
+        );
     }
     eprintln!();
     eprintln!("  {} Next steps:", "▶".cyan().bold());
-    eprintln!("    1. {} codemetrics check .          {}", "$".bright_black(), "— verify everything passes locally".bright_black());
-    eprintln!("    2. {} codemetrics report .         {}", "$".bright_black(), "— open the HTML audit report in your browser".bright_black());
-    eprintln!("    3. {} git push                     {}", "$".bright_black(), "— CI runs automatically on next push".bright_black());
-    eprintln!("    4. {} codemetrics watch . --full   {}", "$".bright_black(), "— live feedback during development".bright_black());
+    eprintln!(
+        "    1. {} codemetrics check .          {}",
+        "$".bright_black(),
+        "— verify everything passes locally".bright_black()
+    );
+    eprintln!(
+        "    2. {} codemetrics report .         {}",
+        "$".bright_black(),
+        "— open the HTML audit report in your browser".bright_black()
+    );
+    eprintln!(
+        "    3. {} git push                     {}",
+        "$".bright_black(),
+        "— CI runs automatically on next push".bright_black()
+    );
+    eprintln!(
+        "    4. {} codemetrics watch . --full   {}",
+        "$".bright_black(),
+        "— live feedback during development".bright_black()
+    );
     eprintln!();
     0
 }
@@ -1968,7 +2210,10 @@ fn discover_command(format: &str) {
             }
         }
         _ => {
-            println!("{}", serde_json::to_string_pretty(&tools).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&tools).expect("Failed to serialize tools to JSON")
+            );
         }
     }
 }
@@ -1977,7 +2222,11 @@ fn discover_command(format: &str) {
 // ═══════════════════════════════════════════
 
 fn main() {
+    // Initialize tracing (set RUST_LOG=debug to see debug logs)
+    tracing_subscriber::fmt::init();
+
     let cli = Cli::parse();
+    info!("CodeMetrics CLI started");
 
     let exit_code = match cli.command {
         Commands::Check {
@@ -2016,14 +2265,63 @@ fn main() {
         } => {
             // --ci: force JSON output and suppress progress (no TTY)
             let format = if ci { "json".to_string() } else { format };
-            if ci { std::env::set_var("CODEMETRICS_NO_PROGRESS", "1"); }
+            if ci {
+                std::env::set_var("CODEMETRICS_NO_PROGRESS", "1");
+            }
 
             // Auto-load .quality.toml if present; CLI flags override file values.
-            let (max_crap, min_doc, max_debt, max_complexity_violations, max_duplication, max_taint, max_risk, max_coupling, min_propcov, max_fuzz_risk, max_linelen, max_halstead_bugs, max_secrets, max_deadcode, max_cohesion, min_comment_ratio, max_errhandle, min_typecov, max_vuln_critical, max_vuln_high, max_sast, max_crypto, max_license_violations) =
-                load_config_thresholds(
-                    ".quality.toml",
-                    (max_crap, min_doc, max_debt, max_complexity_violations, max_duplication, max_taint, max_risk, max_coupling, min_propcov, max_fuzz_risk, max_linelen, max_halstead_bugs, max_secrets, max_deadcode, max_cohesion, min_comment_ratio, max_errhandle, min_typecov, max_vuln_critical, max_vuln_high, max_sast, max_crypto, max_license_violations),
-                );
+            let (
+                max_crap,
+                min_doc,
+                max_debt,
+                max_complexity_violations,
+                max_duplication,
+                max_taint,
+                max_risk,
+                max_coupling,
+                min_propcov,
+                max_fuzz_risk,
+                max_linelen,
+                max_halstead_bugs,
+                max_secrets,
+                max_deadcode,
+                max_cohesion,
+                min_comment_ratio,
+                max_errhandle,
+                min_typecov,
+                max_vuln_critical,
+                max_vuln_high,
+                max_sast,
+                max_crypto,
+                max_license_violations,
+            ) = load_config_thresholds(
+                ".quality.toml",
+                (
+                    max_crap,
+                    min_doc,
+                    max_debt,
+                    max_complexity_violations,
+                    max_duplication,
+                    max_taint,
+                    max_risk,
+                    max_coupling,
+                    min_propcov,
+                    max_fuzz_risk,
+                    max_linelen,
+                    max_halstead_bugs,
+                    max_secrets,
+                    max_deadcode,
+                    max_cohesion,
+                    min_comment_ratio,
+                    max_errhandle,
+                    min_typecov,
+                    max_vuln_critical,
+                    max_vuln_high,
+                    max_sast,
+                    max_crypto,
+                    max_license_violations,
+                ),
+            );
 
             let skip_list: Vec<String> = skip
                 .map(|s| s.split(',').map(|s| s.trim().to_lowercase()).collect())
@@ -2054,10 +2352,28 @@ fn main() {
                         let result = run_with_spinner(label, || $expr);
                         let elapsed = format_elapsed(t.elapsed());
                         let detail = &result.message;
-                        let icon = if result.passed { "✓".green().bold() } else { "✗".red().bold() };
-                        let name_col = if result.passed { label.normal() } else { label.red() };
-                        let msg_col = if result.passed { detail.bright_black() } else { detail.red() };
-                        eprintln!("  {} {:<18} {}  {}", icon, name_col, elapsed.bright_black(), msg_col);
+                        let icon = if result.passed {
+                            "✓".green().bold()
+                        } else {
+                            "✗".red().bold()
+                        };
+                        let name_col = if result.passed {
+                            label.normal()
+                        } else {
+                            label.red()
+                        };
+                        let msg_col = if result.passed {
+                            detail.bright_black()
+                        } else {
+                            detail.red()
+                        };
+                        eprintln!(
+                            "  {} {:<18} {}  {}",
+                            icon,
+                            name_col,
+                            elapsed.bright_black(),
+                            msg_col
+                        );
                         if !result.passed || verbose {
                             print_offenders(&result);
                         }
@@ -2071,70 +2387,127 @@ fn main() {
             let mut checks = Vec::new();
 
             if should_run("crap") {
-                checks.push(run_check!("crap", check_crap(&path, recursive, &coverage, max_crap)));
+                checks.push(run_check!(
+                    "crap",
+                    check_crap(&path, recursive, &coverage, max_crap)
+                ));
             }
             if should_run("debt") {
                 checks.push(run_check!("debt", check_debt(&path, recursive, max_debt)));
             }
             if should_run("doc") {
-                checks.push(run_check!("doc_coverage", check_doc_coverage(&path, recursive, min_doc)));
+                checks.push(run_check!(
+                    "doc_coverage",
+                    check_doc_coverage(&path, recursive, min_doc)
+                ));
             }
             if should_run("complexity") {
-                checks.push(run_check!("complexity", check_complexity(&path, recursive, 10, max_complexity_violations)));
+                checks.push(run_check!(
+                    "complexity",
+                    check_complexity(&path, recursive, 10, max_complexity_violations)
+                ));
             }
             if should_run("taint") {
-                checks.push(run_check!("taint", check_taint(&path, recursive, max_taint)));
+                checks.push(run_check!(
+                    "taint",
+                    check_taint(&path, recursive, max_taint)
+                ));
             }
             if should_run("dup") || should_run("dupfind") || should_run("duplication") {
-                checks.push(run_check!("duplication", check_dupfind(&path, recursive, max_duplication)));
+                checks.push(run_check!(
+                    "duplication",
+                    check_dupfind(&path, recursive, max_duplication)
+                ));
             }
             if should_run("risk") || should_run("riskmap") {
-                checks.push(run_check!("riskmap", check_riskmap(&path, recursive, max_risk)));
+                checks.push(run_check!(
+                    "riskmap",
+                    check_riskmap(&path, recursive, max_risk)
+                ));
             }
             if should_run("coupling") {
                 checks.push(run_check!("coupling", check_coupling(&path, max_coupling)));
             }
             if should_run("propcov") {
-                checks.push(run_check!("propcov", check_propcov(&path, recursive, min_propcov)));
+                checks.push(run_check!(
+                    "propcov",
+                    check_propcov(&path, recursive, min_propcov)
+                ));
             }
             if should_run("fuzz") {
-                checks.push(run_check!("fuzz", check_fuzz(&path, recursive, max_fuzz_risk)));
+                checks.push(run_check!(
+                    "fuzz",
+                    check_fuzz(&path, recursive, max_fuzz_risk)
+                ));
             }
             if should_run("linelen") {
-                checks.push(run_check!("linelen", check_linelen(&path, recursive, max_linelen)));
+                checks.push(run_check!(
+                    "linelen",
+                    check_linelen(&path, recursive, max_linelen)
+                ));
             }
             if should_run("halstead") {
-                checks.push(run_check!("halstead", check_halstead(&path, recursive, max_halstead_bugs)));
+                checks.push(run_check!(
+                    "halstead",
+                    check_halstead(&path, recursive, max_halstead_bugs)
+                ));
             }
             if should_run("secrets") {
-                checks.push(run_check!("secrets", check_secrets(&path, recursive, max_secrets)));
+                checks.push(run_check!(
+                    "secrets",
+                    check_secrets(&path, recursive, max_secrets)
+                ));
             }
             if should_run("deadcode") {
-                checks.push(run_check!("deadcode", check_deadcode(&path, recursive, max_deadcode)));
+                checks.push(run_check!(
+                    "deadcode",
+                    check_deadcode(&path, recursive, max_deadcode)
+                ));
             }
             if should_run("cohesion") {
-                checks.push(run_check!("cohesion", check_cohesion(&path, recursive, max_cohesion)));
+                checks.push(run_check!(
+                    "cohesion",
+                    check_cohesion(&path, recursive, max_cohesion)
+                ));
             }
             if should_run("comments") {
-                checks.push(run_check!("comments", check_comments(&path, recursive, min_comment_ratio)));
+                checks.push(run_check!(
+                    "comments",
+                    check_comments(&path, recursive, min_comment_ratio)
+                ));
             }
             if should_run("errhandle") {
-                checks.push(run_check!("errhandle", check_errhandle(&path, recursive, max_errhandle)));
+                checks.push(run_check!(
+                    "errhandle",
+                    check_errhandle(&path, recursive, max_errhandle)
+                ));
             }
             if should_run("typecov") && min_typecov > 0.0 {
-                checks.push(run_check!("typecov", check_typecov(&path, recursive, min_typecov)));
+                checks.push(run_check!(
+                    "typecov",
+                    check_typecov(&path, recursive, min_typecov)
+                ));
             }
             if should_run("vulnscan") {
-                checks.push(run_check!("vulnscan", check_vulnscan(&path, max_vuln_critical, max_vuln_high)));
+                checks.push(run_check!(
+                    "vulnscan",
+                    check_vulnscan(&path, max_vuln_critical, max_vuln_high)
+                ));
             }
             if should_run("sast") {
                 checks.push(run_check!("sast", check_sast(&path, recursive, max_sast)));
             }
             if should_run("crypto") {
-                checks.push(run_check!("crypto", check_crypto(&path, recursive, max_crypto)));
+                checks.push(run_check!(
+                    "crypto",
+                    check_crypto(&path, recursive, max_crypto)
+                ));
             }
             if should_run("licenses") {
-                checks.push(run_check!("licenses", check_licenses(&path, max_license_violations)));
+                checks.push(run_check!(
+                    "licenses",
+                    check_licenses(&path, max_license_violations)
+                ));
             }
             if should_run("outdated") {
                 checks.push(run_check!("outdated", check_outdated(&path, max_outdated)));
@@ -2167,7 +2540,15 @@ fn main() {
 
             match format.as_str() {
                 "text" => {
-                    print_summary_box("CODEMETRICS CHECK", passed, &path, passed_count, total_checks, check_start.elapsed(), &report.checks);
+                    print_summary_box(
+                        "CODEMETRICS CHECK",
+                        passed,
+                        &path,
+                        passed_count,
+                        total_checks,
+                        check_start.elapsed(),
+                        &report.checks,
+                    );
                 }
                 "ndjson" => output_ndjson(&report),
                 _ => output_json(&report),
@@ -2194,13 +2575,24 @@ fn main() {
             let passed = result.passed;
             match format.as_str() {
                 "text" => {
-                    let icon = if passed { "✓".green().bold() } else { "✗".red().bold() };
+                    let icon = if passed {
+                        "✓".green().bold()
+                    } else {
+                        "✗".red().bold()
+                    };
                     eprintln!("  {} crap  {}", icon, result.message.bright_black());
                     println!("{}", result.message);
                 }
-                _ => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
+                _ => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).expect("Failed to serialize to JSON")
+                ),
             }
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
         Commands::Debt {
@@ -2217,13 +2609,24 @@ fn main() {
             let passed = result.passed;
             match format.as_str() {
                 "text" => {
-                    let icon = if passed { "✓".green().bold() } else { "✗".red().bold() };
+                    let icon = if passed {
+                        "✓".green().bold()
+                    } else {
+                        "✗".red().bold()
+                    };
                     eprintln!("  {} debt  {}", icon, result.message.bright_black());
                     println!("{}", result.message);
                 }
-                _ => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
+                _ => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).expect("Failed to serialize to JSON")
+                ),
             }
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
         Commands::Doccov {
@@ -2239,13 +2642,24 @@ fn main() {
             let passed = result.passed;
             match format.as_str() {
                 "text" => {
-                    let icon = if passed { "✓".green().bold() } else { "✗".red().bold() };
+                    let icon = if passed {
+                        "✓".green().bold()
+                    } else {
+                        "✗".red().bold()
+                    };
                     eprintln!("  {} doccov  {}", icon, result.message.bright_black());
                     println!("{}", result.message);
                 }
-                _ => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
+                _ => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).expect("Failed to serialize to JSON")
+                ),
             }
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
         Commands::Dupfind { .. } => {
@@ -2260,20 +2674,33 @@ fn main() {
             format,
         } => {
             let result = if format == "text" {
-                run_with_spinner("complexity", || check_complexity(&path, recursive, min_complexity, 0))
+                run_with_spinner("complexity", || {
+                    check_complexity(&path, recursive, min_complexity, 0)
+                })
             } else {
                 check_complexity(&path, recursive, min_complexity, 0)
             };
             let passed = result.passed;
             match format.as_str() {
                 "text" => {
-                    let icon = if passed { "✓".green().bold() } else { "✗".red().bold() };
+                    let icon = if passed {
+                        "✓".green().bold()
+                    } else {
+                        "✗".red().bold()
+                    };
                     eprintln!("  {} complexity  {}", icon, result.message.bright_black());
                     println!("{}", result.message);
                 }
-                _ => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
+                _ => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).expect("Failed to serialize to JSON")
+                ),
             }
-            if passed { 0 } else { 1 }
+            if passed {
+                0
+            } else {
+                1
+            }
         }
 
         Commands::Setup => {
@@ -2288,7 +2715,11 @@ fn main() {
                 "  {} detected: {}  ({})",
                 "✓".green().bold(),
                 profile.ecosystem.to_string().cyan().bold(),
-                if profile.test_cmd.is_empty() { "no test runner".to_string() } else { profile.test_cmd.join(" ") }
+                if profile.test_cmd.is_empty() {
+                    "no test runner".to_string()
+                } else {
+                    profile.test_cmd.join(" ")
+                }
             );
             let _ = detect_start;
             if ci {
@@ -2296,15 +2727,40 @@ fn main() {
             } else {
                 let write_start = Instant::now();
                 generate_config(&output, &profile);
-                eprintln!("  {} wrote {}  ({})", "✓".green().bold(), output.cyan(), format_elapsed(write_start.elapsed()).bright_black());
+                eprintln!(
+                    "  {} wrote {}  ({})",
+                    "✓".green().bold(),
+                    output.cyan(),
+                    format_elapsed(write_start.elapsed()).bright_black()
+                );
                 eprintln!();
                 eprintln!("  {} Next steps:", "▶".cyan().bold());
-                eprintln!("    1. {} codemetrics check .          {}", "$".bright_black(), "— run all checks now".bright_black());
-                eprintln!("    2. {} codemetrics report .         {}", "$".bright_black(), "— generate HTML audit report".bright_black());
-                eprintln!("    3. {} codemetrics init --ci        {}", "$".bright_black(), "— wire GitHub Actions + pre-commit hook".bright_black());
-                eprintln!("    4. {} codemetrics watch .          {}", "$".bright_black(), "— live re-check on file save".bright_black());
+                eprintln!(
+                    "    1. {} codemetrics check .          {}",
+                    "$".bright_black(),
+                    "— run all checks now".bright_black()
+                );
+                eprintln!(
+                    "    2. {} codemetrics report .         {}",
+                    "$".bright_black(),
+                    "— generate HTML audit report".bright_black()
+                );
+                eprintln!(
+                    "    3. {} codemetrics init --ci        {}",
+                    "$".bright_black(),
+                    "— wire GitHub Actions + pre-commit hook".bright_black()
+                );
+                eprintln!(
+                    "    4. {} codemetrics watch .          {}",
+                    "$".bright_black(),
+                    "— live re-check on file save".bright_black()
+                );
                 eprintln!();
-                eprintln!("  {} Tip: edit {} to tune thresholds for your project.", "ℹ".cyan(), output.cyan());
+                eprintln!(
+                    "  {} Tip: edit {} to tune thresholds for your project.",
+                    "ℹ".cyan(),
+                    output.cyan()
+                );
                 0
             }
         }
@@ -2355,7 +2811,15 @@ fn main() {
             from_json,
             skip,
             open,
-        } => report_command(&path, &format, output.as_deref(), project.as_deref(), from_json.as_deref(), skip.as_deref(), open),
+        } => report_command(
+            &path,
+            &format,
+            output.as_deref(),
+            project.as_deref(),
+            from_json.as_deref(),
+            skip.as_deref(),
+            open,
+        ),
 
         Commands::Diff { before, after } => diff_command(&before, &after),
     };
@@ -2458,8 +2922,12 @@ fn run_batch(
     } else {
         format!("{} MB", mem_limit_mb)
     };
-    eprintln!("  {} CodeMetrics batch  ·  path: {}  ·  memory limit: {}",
-        "▶".cyan().bold(), path.cyan(), mem_display.bright_black());
+    eprintln!(
+        "  {} CodeMetrics batch  ·  path: {}  ·  memory limit: {}",
+        "▶".cyan().bold(),
+        path.cyan(),
+        mem_display.bright_black()
+    );
 
     let tools: Vec<(&str, &str, Vec<&str>)> = vec![
         (
@@ -2557,11 +3025,7 @@ fn run_batch(
             "typecov",
             vec!["--recursive", path, "--format", "json"],
         ),
-        (
-            "vuln-scan",
-            "vulnscan",
-            vec![path, "--format", "json"],
-        ),
+        ("vuln-scan", "vulnscan", vec![path, "--format", "json"]),
         (
             "sast",
             "sast",
@@ -2572,11 +3036,7 @@ fn run_batch(
             "cryptocheck",
             vec!["--recursive", path, "--format", "json"],
         ),
-        (
-            "licenses",
-            "licenses",
-            vec![path, "--format", "json"],
-        ),
+        ("licenses", "licenses", vec![path, "--format", "json"]),
     ];
 
     // Run tools sequentially to prevent memory exhaustion
@@ -2591,7 +3051,9 @@ fn run_batch(
             bar.finish();
             eprintln!(
                 "  {} Memory limit exceeded before running {} ({} MB used). Stopping batch.",
-                "✗".red().bold(), bin_name, usage.rss_bytes / 1024 / 1024
+                "✗".red().bold(),
+                bin_name,
+                usage.rss_bytes / 1024 / 1024
             );
             break;
         }
@@ -2608,7 +3070,9 @@ fn run_batch(
             bar.finish();
             eprintln!(
                 "  {} Memory limit exceeded after {} ({} MB used). Stopping batch.",
-                "✗".red().bold(), bin_name, usage.rss_bytes / 1024 / 1024
+                "✗".red().bold(),
+                bin_name,
+                usage.rss_bytes / 1024 / 1024
             );
             break;
         }
@@ -2687,13 +3151,16 @@ fn run_batch(
                 if failed > 0 { 1 } else { 0 },
             );
             log.add_run(run);
-            println!("{}", serde_json::to_string_pretty(&log).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&log).expect("Failed to serialize log to JSON")
+            );
         }
         "json" => {
             let report = new_unified_report(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .expect("System time is before UNIX epoch")
                     .as_secs()
                     .to_string(),
             );
@@ -2722,17 +3189,36 @@ fn run_batch(
                     languages_detected: langs_detected,
                 },
             };
-            println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).expect("Failed to serialize report to JSON")
+            );
         }
         _ => {
             let all_ok = failed == 0;
-            let summary_str = format!("{}/{} tools passed  ·  {}", passed, results.len(), format_ms(duration_ms));
-            let summary_col = if all_ok { summary_str.green().to_string() } else { summary_str.red().to_string() };
+            let summary_str = format!(
+                "{}/{} tools passed  ·  {}",
+                passed,
+                results.len(),
+                format_ms(duration_ms)
+            );
+            let summary_col = if all_ok {
+                summary_str.green().to_string()
+            } else {
+                summary_str.red().to_string()
+            };
             let inner = 46usize;
             let border = "═".repeat(inner + 2);
             eprintln!();
             eprintln!("  ╔{}╗", border);
-            let title = format!("CODEMETRICS RUN  ·  {}", if all_ok { "PASSED ✓".green().bold().to_string() } else { "FAILED ✗".red().bold().to_string() });
+            let title = format!(
+                "CODEMETRICS RUN  ·  {}",
+                if all_ok {
+                    "PASSED ✓".green().bold().to_string()
+                } else {
+                    "FAILED ✗".red().bold().to_string()
+                }
+            );
             box_row(&title, inner);
             eprintln!("  ╠{}╣", border);
             box_row(&summary_col, inner);
@@ -3033,7 +3519,9 @@ fn install_hooks_impl(repo: &str, fast: bool, profile: &ProjectProfile) -> i32 {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&hook_path).unwrap().permissions();
+        let mut perms = std::fs::metadata(&hook_path)
+            .expect("Failed to get file metadata")
+            .permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&hook_path, perms).ok();
     }
@@ -3152,13 +3640,19 @@ fn watch_mode(path: &str, checks: &str, debounce_ms: u64, no_tests: bool, full: 
     let profile = detect_project(path);
     let check_list: Vec<String> = checks.split(',').map(|s| s.trim().to_lowercase()).collect();
 
-    println!("codemetrics watch: watching {} ({})", path, profile.ecosystem);
+    println!(
+        "codemetrics watch: watching {} ({})",
+        path, profile.ecosystem
+    );
     if full {
         println!("  checks: ALL (--full mode)");
     } else {
         println!("  checks: {}", check_list.join(", "));
     }
-    println!("  watching extensions: .{}", profile.watch_extensions.join(", ."));
+    println!(
+        "  watching extensions: .{}",
+        profile.watch_extensions.join(", .")
+    );
     if no_tests || !profile.is_coverage_available() {
         println!("  mode: metrics-only (no test runner)");
     } else {
@@ -3224,14 +3718,27 @@ fn watch_mode(path: &str, checks: &str, debounce_ms: u64, no_tests: bool, full: 
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs();
-                        format!("{:02}:{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60, secs % 60)
+                        format!(
+                            "{:02}:{:02}:{:02}",
+                            (secs / 3600) % 24,
+                            (secs / 60) % 60,
+                            secs % 60
+                        )
                     };
                     let cycle_start = Instant::now();
-                    eprintln!("\n  {} File changed: {}", ts.bright_black(), changed.join(", ").cyan());
+                    eprintln!(
+                        "\n  {} File changed: {}",
+                        ts.bright_black(),
+                        changed.join(", ").cyan()
+                    );
                     let new_results = run_watch_checks(path, &check_list, no_tests, &profile, full);
                     print_cycle_diff(&prev_results, &new_results);
                     prev_results = new_results;
-                    eprintln!("  {} Cycle complete  ({})", "◉".bright_black(), format_elapsed(cycle_start.elapsed()).bright_black());
+                    eprintln!(
+                        "  {} Cycle complete  ({})",
+                        "◉".bright_black(),
+                        format_elapsed(cycle_start.elapsed()).bright_black()
+                    );
                     eprintln!("  {} Watching for changes…", "◉".bright_black());
                 }
             }
@@ -3267,7 +3774,9 @@ fn run_tests_and_coverage(profile: &ProjectProfile) -> Option<String> {
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             eprintln!("  {} tests FAILED:", "✗".red().bold());
-            for line in stderr.lines().take(15) { eprintln!("    {}", line); }
+            for line in stderr.lines().take(15) {
+                eprintln!("    {}", line);
+            }
             return None;
         }
         Err(e) => {
@@ -3288,27 +3797,47 @@ fn run_tests_and_coverage(profile: &ProjectProfile) -> Option<String> {
     match cov_out {
         Ok(o) if o.status.success() => {
             if std::path::Path::new(&profile.lcov_path).exists() {
-                eprintln!("  {} coverage → {}", "✓".green().bold(), profile.lcov_path.cyan());
+                eprintln!(
+                    "  {} coverage → {}",
+                    "✓".green().bold(),
+                    profile.lcov_path.cyan()
+                );
                 Some(profile.lcov_path.clone())
             } else {
-                eprintln!("  {} coverage command succeeded but {} not found", "!".yellow().bold(), profile.lcov_path);
+                eprintln!(
+                    "  {} coverage command succeeded but {} not found",
+                    "!".yellow().bold(),
+                    profile.lcov_path
+                );
                 None
             }
         }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             eprintln!("  {} coverage failed:", "✗".red().bold());
-            for line in stderr.lines().take(8) { eprintln!("    {}", line); }
+            for line in stderr.lines().take(8) {
+                eprintln!("    {}", line);
+            }
             None
         }
         Err(e) => {
-            eprintln!("  {} Could not run coverage command: {}", "✗".red().bold(), e);
+            eprintln!(
+                "  {} Could not run coverage command: {}",
+                "✗".red().bold(),
+                e
+            );
             None
         }
     }
 }
 
-fn run_watch_checks(path: &str, check_list: &[String], no_tests: bool, profile: &ProjectProfile, full: bool) -> Vec<(String, bool)> {
+fn run_watch_checks(
+    path: &str,
+    check_list: &[String],
+    no_tests: bool,
+    profile: &ProjectProfile,
+    full: bool,
+) -> Vec<(String, bool)> {
     let should = |name: &str| check_list.iter().any(|c| c == name);
 
     // Optionally run tests + coverage and get lcov path for CRAP
@@ -3331,42 +3860,80 @@ fn run_watch_checks(path: &str, check_list: &[String], no_tests: bool, profile: 
 
     if full {
         let cov_owned = coverage_opt.map(|s| s.to_string());
-        wpush!("debt",       check_debt(path, true, profile.max_debt));
-        wpush!("doc",        check_doc_coverage(path, true, profile.min_doc));
-        wpush!("crap",       check_crap(path, true, &cov_owned, profile.max_crap));
-        wpush!("complexity", check_complexity(path, true, 10, profile.max_complexity_violations));
-        wpush!("taint",      check_taint(path, true, 0));
-        wpush!("errhandle",  check_errhandle(path, true, 50));
-        wpush!("secrets",    check_secrets(path, true, 0));
-        wpush!("deadcode",   check_deadcode(path, true, 10));
-        wpush!("linelen",    check_linelen(path, true, 0));
+        wpush!("debt", check_debt(path, true, profile.max_debt));
+        wpush!("doc", check_doc_coverage(path, true, profile.min_doc));
+        wpush!("crap", check_crap(path, true, &cov_owned, profile.max_crap));
+        wpush!(
+            "complexity",
+            check_complexity(path, true, 10, profile.max_complexity_violations)
+        );
+        wpush!("taint", check_taint(path, true, 0));
+        wpush!("errhandle", check_errhandle(path, true, 50));
+        wpush!("secrets", check_secrets(path, true, 0));
+        wpush!("deadcode", check_deadcode(path, true, 10));
+        wpush!("linelen", check_linelen(path, true, 0));
     } else {
-        if should("debt")       { wpush!("debt",       check_debt(path, true, profile.max_debt)); }
-        if should("doc")        { wpush!("doc",        check_doc_coverage(path, true, profile.min_doc)); }
-        if should("crap")       {
-            let cov_owned = coverage_opt.map(|s| s.to_string());
-            wpush!("crap",       check_crap(path, true, &cov_owned, profile.max_crap));
+        if should("debt") {
+            wpush!("debt", check_debt(path, true, profile.max_debt));
         }
-        if should("complexity") { wpush!("complexity", check_complexity(path, true, 10, profile.max_complexity_violations)); }
-        if should("taint")      { wpush!("taint",      check_taint(path, true, 0)); }
-        if should("errhandle")  { wpush!("errhandle",  check_errhandle(path, true, 50)); }
-        if should("secrets")    { wpush!("secrets",    check_secrets(path, true, 0)); }
-        if should("deadcode")   { wpush!("deadcode",   check_deadcode(path, true, 10)); }
-        if should("linelen")    { wpush!("linelen",    check_linelen(path, true, 0)); }
+        if should("doc") {
+            wpush!("doc", check_doc_coverage(path, true, profile.min_doc));
+        }
+        if should("crap") {
+            let cov_owned = coverage_opt.map(|s| s.to_string());
+            wpush!("crap", check_crap(path, true, &cov_owned, profile.max_crap));
+        }
+        if should("complexity") {
+            wpush!(
+                "complexity",
+                check_complexity(path, true, 10, profile.max_complexity_violations)
+            );
+        }
+        if should("taint") {
+            wpush!("taint", check_taint(path, true, 0));
+        }
+        if should("errhandle") {
+            wpush!("errhandle", check_errhandle(path, true, 50));
+        }
+        if should("secrets") {
+            wpush!("secrets", check_secrets(path, true, 0));
+        }
+        if should("deadcode") {
+            wpush!("deadcode", check_deadcode(path, true, 10));
+        }
+        if should("linelen") {
+            wpush!("linelen", check_linelen(path, true, 0));
+        }
     }
 
     let all_passed = results.iter().all(|(_, p, _)| *p);
     eprintln!();
     for (name, passed, msg) in &results {
-        let icon = if *passed { "✓".green().bold() } else { "✗".red().bold() };
+        let icon = if *passed {
+            "✓".green().bold()
+        } else {
+            "✗".red().bold()
+        };
         let name_col = if *passed { name.normal() } else { name.red() };
-        let msg_col = if *passed { msg.bright_black() } else { msg.red() };
+        let msg_col = if *passed {
+            msg.bright_black()
+        } else {
+            msg.red()
+        };
         eprintln!("  {} {:<15}  {}", icon, name_col, msg_col);
     }
     if coverage_opt.is_some() {
-        eprintln!("  {} using coverage from {}", "ℹ".cyan(), profile.lcov_path.bright_black());
+        eprintln!(
+            "  {} using coverage from {}",
+            "ℹ".cyan(),
+            profile.lcov_path.bright_black()
+        );
     }
-    let overall = if all_passed { "ALL CHECKS PASS".green().bold() } else { "SOME CHECKS FAILED".red().bold() };
+    let overall = if all_passed {
+        "ALL CHECKS PASS".green().bold()
+    } else {
+        "SOME CHECKS FAILED".red().bold()
+    };
     eprintln!("  {}", overall);
 
     results.into_iter().map(|(n, p, _)| (n, p)).collect()
@@ -3374,18 +3941,22 @@ fn run_watch_checks(path: &str, check_list: &[String], no_tests: bool, profile: 
 
 /// Print a diff line if any checks changed pass/fail state since the last cycle.
 fn print_cycle_diff(prev: &[(String, bool)], curr: &[(String, bool)]) {
-    if prev.is_empty() { return; }
+    if prev.is_empty() {
+        return;
+    }
     let mut regressions: Vec<&str> = Vec::new();
     let mut fixes: Vec<&str> = Vec::new();
     for (name, passed) in curr {
         let prev_passed = prev.iter().find(|(n, _)| n == name).map(|(_, p)| *p);
         match prev_passed {
-            Some(true) if !passed  => regressions.push(name),
+            Some(true) if !passed => regressions.push(name),
             Some(false) if *passed => fixes.push(name),
             _ => {}
         }
     }
-    if regressions.is_empty() && fixes.is_empty() { return; }
+    if regressions.is_empty() && fixes.is_empty() {
+        return;
+    }
     eprintln!("  {} Cycle diff:", "△".yellow());
     for name in &fixes {
         eprintln!("    {} {} now passing", "↑".green().bold(), name.green());
@@ -3401,18 +3972,33 @@ fn print_cycle_diff(prev: &[(String, bool)], curr: &[(String, bool)]) {
 
 fn check_taint(path: &str, recursive: bool, max_taint: usize) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("taint-scan", "taint", &args, Instant::now());
-    let violations = res.data.get("summary").and_then(|s| s.get("violations_count")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let violations = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("violations_count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = violations <= max_taint;
     CheckResult {
         name: "taint".into(),
         passed,
         score: Some(violations as f64),
         threshold: Some(max_taint as f64),
-        message: if passed { format!("{} taint violations <= {}", violations, max_taint) } else { format!("{} taint violations > allowed {}", violations, max_taint) },
+        message: if passed {
+            format!("{} taint violations <= {}", violations, max_taint)
+        } else {
+            format!("{} taint violations > allowed {}", violations, max_taint)
+        },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("high".into())
+        },
         help: None,
         rule_id: Some("taint_limit".into()),
     }
@@ -3420,18 +4006,33 @@ fn check_taint(path: &str, recursive: bool, max_taint: usize) -> CheckResult {
 
 fn check_dupfind(path: &str, recursive: bool, max_duplication: f64) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("duplication", "dupfind", &args, Instant::now());
-    let groups = res.data.get("summary").and_then(|s| s.get("total_groups")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let groups = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("total_groups"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let passed = groups <= max_duplication;
     CheckResult {
         name: "duplication".into(),
         passed,
         score: Some(groups),
         threshold: Some(max_duplication),
-        message: if passed { format!("{} duplicated groups <= {}", groups, max_duplication) } else { format!("{} duplicated groups > allowed {}", groups, max_duplication) },
+        message: if passed {
+            format!("{} duplicated groups <= {}", groups, max_duplication)
+        } else {
+            format!("{} duplicated groups > allowed {}", groups, max_duplication)
+        },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("medium".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("medium".into())
+        },
         help: None,
         rule_id: Some("duplication_limit".into()),
     }
@@ -3441,8 +4042,15 @@ fn check_riskmap(path: &str, _recursive: bool, max_risk: f64) -> CheckResult {
     let args = vec![path, "--format", "json"];
     // riskmap doesn't use recursive flag, it always scans dir
     let res = run_tool("risk-map", "riskmap", &args, Instant::now());
-    let max_found_risk = res.data.get("files").and_then(|a| a.as_array())
-        .map(|arr| arr.iter().filter_map(|f| f.get("risk_score").and_then(|v| v.as_f64())).fold(0.0f64, f64::max))
+    let max_found_risk = res
+        .data
+        .get("files")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|f| f.get("risk_score").and_then(|v| v.as_f64()))
+                .fold(0.0f64, f64::max)
+        })
         .unwrap_or(0.0);
     let passed = max_found_risk <= max_risk;
     CheckResult {
@@ -3450,9 +4058,20 @@ fn check_riskmap(path: &str, _recursive: bool, max_risk: f64) -> CheckResult {
         passed,
         score: Some(max_found_risk),
         threshold: Some(max_risk),
-        message: if passed { format!("Max risk score {:.1} <= {:.1}", max_found_risk, max_risk) } else { format!("Max risk score {:.1} > allowed {:.1}", max_found_risk, max_risk) },
+        message: if passed {
+            format!("Max risk score {:.1} <= {:.1}", max_found_risk, max_risk)
+        } else {
+            format!(
+                "Max risk score {:.1} > allowed {:.1}",
+                max_found_risk, max_risk
+            )
+        },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("high".into())
+        },
         help: None,
         rule_id: Some("riskmap_limit".into()),
     }
@@ -3461,16 +4080,29 @@ fn check_riskmap(path: &str, _recursive: bool, max_risk: f64) -> CheckResult {
 fn check_coupling(path: &str, max_coupling: usize) -> CheckResult {
     let args = vec![path, "--format", "json"];
     let res = run_tool("coupling", "coupling", &args, Instant::now());
-    let avg_fan_out = res.data.get("summary").and_then(|s| s.get("avg_fan_out")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let avg_fan_out = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("avg_fan_out"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let passed = avg_fan_out <= max_coupling as f64;
     CheckResult {
         name: "coupling".into(),
         passed,
         score: Some(avg_fan_out),
         threshold: Some(max_coupling as f64),
-        message: if passed { format!("Avg fan-out {:.1} <= {}", avg_fan_out, max_coupling) } else { format!("Avg fan-out {:.1} > allowed {}", avg_fan_out, max_coupling) },
+        message: if passed {
+            format!("Avg fan-out {:.1} <= {}", avg_fan_out, max_coupling)
+        } else {
+            format!("Avg fan-out {:.1} > allowed {}", avg_fan_out, max_coupling)
+        },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("medium".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("medium".into())
+        },
         help: None,
         rule_id: Some("coupling_limit".into()),
     }
@@ -3478,18 +4110,33 @@ fn check_coupling(path: &str, max_coupling: usize) -> CheckResult {
 
 fn check_propcov(path: &str, recursive: bool, min_propcov: f64) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("prop-cov", "propcov", &args, Instant::now());
-    let coverage = res.data.get("summary").and_then(|s| s.get("coverage_percentage")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let coverage = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("coverage_percentage"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let passed = coverage >= min_propcov;
     CheckResult {
         name: "propcov".into(),
         passed,
         score: Some(coverage),
         threshold: Some(min_propcov),
-        message: if passed { format!("PropCov {:.1}% >= {:.1}%", coverage, min_propcov) } else { format!("PropCov {:.1}% < required {:.1}%", coverage, min_propcov) },
+        message: if passed {
+            format!("PropCov {:.1}% >= {:.1}%", coverage, min_propcov)
+        } else {
+            format!("PropCov {:.1}% < required {:.1}%", coverage, min_propcov)
+        },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("high".into())
+        },
         help: None,
         rule_id: Some("propcov_limit".into()),
     }
@@ -3497,18 +4144,36 @@ fn check_propcov(path: &str, recursive: bool, min_propcov: f64) -> CheckResult {
 
 fn check_fuzz(path: &str, recursive: bool, max_fuzz_risk: usize) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("fuzz-surface", "fuzz", &args, Instant::now());
-    let fuzzable = res.data.get("summary").and_then(|s| s.get("fuzzable_functions")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let fuzzable = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("fuzzable_functions"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = fuzzable <= max_fuzz_risk;
     CheckResult {
         name: "fuzz".into(),
         passed,
         score: Some(fuzzable as f64),
         threshold: Some(max_fuzz_risk as f64),
-        message: if passed { format!("{} fuzzable endpoints <= {}", fuzzable, max_fuzz_risk) } else { format!("{} fuzzable endpoints > allowed {}", fuzzable, max_fuzz_risk) },
+        message: if passed {
+            format!("{} fuzzable endpoints <= {}", fuzzable, max_fuzz_risk)
+        } else {
+            format!(
+                "{} fuzzable endpoints > allowed {}",
+                fuzzable, max_fuzz_risk
+            )
+        },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("high".into())
+        },
         help: None,
         rule_id: Some("fuzz_limit".into()),
     }
@@ -3516,10 +4181,22 @@ fn check_fuzz(path: &str, recursive: bool, max_fuzz_risk: usize) -> CheckResult 
 
 fn check_linelen(path: &str, recursive: bool, max_violations: usize) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("line-length", "linelen", &args, Instant::now());
-    let fn_viols = res.data.get("summary").and_then(|s| s.get("fn_violations")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let file_viols = res.data.get("summary").and_then(|s| s.get("file_violations")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let fn_viols = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("fn_violations"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let file_viols = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("file_violations"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let total = fn_viols + file_viols;
     let passed = total <= max_violations;
     CheckResult {
@@ -3528,13 +4205,23 @@ fn check_linelen(path: &str, recursive: bool, max_violations: usize) -> CheckRes
         score: Some(total as f64),
         threshold: Some(max_violations as f64),
         message: if passed {
-            if total == 0 { format!("All functions and files within size limits") }
-            else { format!("{} violations <= allowed {}", total, max_violations) }
+            if total == 0 {
+                format!("All functions and files within size limits")
+            } else {
+                format!("{} violations <= allowed {}", total, max_violations)
+            }
         } else {
-            format!("{} line-length violations > allowed {}", total, max_violations)
+            format!(
+                "{} line-length violations > allowed {}",
+                total, max_violations
+            )
         },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("warning".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("warning".into())
+        },
         help: Some("Functions should be <= 40 lines; files should be <= 500 lines.".into()),
         rule_id: Some("linelen_limit".into()),
     }
@@ -3543,10 +4230,22 @@ fn check_linelen(path: &str, recursive: bool, max_violations: usize) -> CheckRes
 fn check_halstead(path: &str, recursive: bool, max_bugs: f64) -> CheckResult {
     let max_bugs_str = format!("{}", max_bugs);
     let mut args = vec![path, "--format", "json", "--max-bugs", &max_bugs_str];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("halstead", "halstead", &args, Instant::now());
-    let exceeding = res.data.get("summary").and_then(|s| s.get("files_exceeding_bugs_threshold")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let total_bugs = res.data.get("summary").and_then(|s| s.get("total_bugs_estimated")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let exceeding = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("files_exceeding_bugs_threshold"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let total_bugs = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("total_bugs_estimated"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let passed = exceeding == 0;
     CheckResult {
         name: "halstead".into(),
@@ -3554,22 +4253,42 @@ fn check_halstead(path: &str, recursive: bool, max_bugs: f64) -> CheckResult {
         score: Some(total_bugs),
         threshold: Some(max_bugs),
         message: if passed {
-            format!("Halstead bugs estimated {:.2} (no file exceeds {:.1})", total_bugs.max(0.0), max_bugs)
+            format!(
+                "Halstead bugs estimated {:.2} (no file exceeds {:.1})",
+                total_bugs.max(0.0),
+                max_bugs
+            )
         } else {
-            format!("{} files exceed Halstead bugs threshold of {:.1}", exceeding, max_bugs)
+            format!(
+                "{} files exceed Halstead bugs threshold of {:.1}",
+                exceeding, max_bugs
+            )
         },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("warning".into()) },
-        help: Some("Halstead bugs = Volume/3000. High values indicate complex, error-prone code.".into()),
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("warning".into())
+        },
+        help: Some(
+            "Halstead bugs = Volume/3000. High values indicate complex, error-prone code.".into(),
+        ),
         rule_id: Some("halstead_bugs".into()),
     }
 }
 
 fn check_secrets(path: &str, recursive: bool, max_violations: usize) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("secrets", "secrets", &args, Instant::now());
-    let findings = res.data.get("summary").and_then(|s| s.get("findings_count")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let findings = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("findings_count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = findings <= max_violations;
     CheckResult {
         name: "secrets".into(),
@@ -3577,13 +4296,23 @@ fn check_secrets(path: &str, recursive: bool, max_violations: usize) -> CheckRes
         score: Some(findings as f64),
         threshold: Some(max_violations as f64),
         message: if passed {
-            if findings == 0 { "No hardcoded secrets detected".into() }
-            else { format!("{} secret findings <= allowed {}", findings, max_violations) }
+            if findings == 0 {
+                "No hardcoded secrets detected".into()
+            } else {
+                format!("{} secret findings <= allowed {}", findings, max_violations)
+            }
         } else {
-            format!("{} hardcoded secret findings > allowed {}", findings, max_violations)
+            format!(
+                "{} hardcoded secret findings > allowed {}",
+                findings, max_violations
+            )
         },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("high".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("high".into())
+        },
         help: Some("Move secrets to environment variables or a secrets manager.".into()),
         rule_id: Some("secrets_limit".into()),
     }
@@ -3591,9 +4320,16 @@ fn check_secrets(path: &str, recursive: bool, max_violations: usize) -> CheckRes
 
 fn check_deadcode(path: &str, recursive: bool, max_violations: usize) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("dead-code", "deadcode", &args, Instant::now());
-    let findings = res.data.get("summary").and_then(|s| s.get("total_findings")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let findings = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("total_findings"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = findings <= max_violations;
     CheckResult {
         name: "deadcode".into(),
@@ -3601,14 +4337,29 @@ fn check_deadcode(path: &str, recursive: bool, max_violations: usize) -> CheckRe
         score: Some(findings as f64),
         threshold: Some(max_violations as f64),
         message: if passed {
-            if findings == 0 { "No dead code patterns detected".into() }
-            else { format!("{} dead code findings <= allowed {}", findings, max_violations) }
+            if findings == 0 {
+                "No dead code patterns detected".into()
+            } else {
+                format!(
+                    "{} dead code findings <= allowed {}",
+                    findings, max_violations
+                )
+            }
         } else {
-            format!("{} dead code findings > allowed {}", findings, max_violations)
+            format!(
+                "{} dead code findings > allowed {}",
+                findings, max_violations
+            )
         },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("warning".into()) },
-        help: Some("Remove unused imports, #[allow(dead_code)] suppressions, and dead assignments.".into()),
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("warning".into())
+        },
+        help: Some(
+            "Remove unused imports, #[allow(dead_code)] suppressions, and dead assignments.".into(),
+        ),
         rule_id: Some("deadcode_limit".into()),
     }
 }
@@ -3616,11 +4367,28 @@ fn check_deadcode(path: &str, recursive: bool, max_violations: usize) -> CheckRe
 fn check_sast(path: &str, recursive: bool, max_findings: usize) -> CheckResult {
     let max_str = format!("{}", max_findings);
     let mut args = vec![path, "--format", "json", "--max-findings", &max_str];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("sast", "sast", &args, Instant::now());
-    let total = res.data.get("summary").and_then(|s| s.get("total_findings")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let critical = res.data.get("summary").and_then(|s| s.get("critical")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let high = res.data.get("summary").and_then(|s| s.get("high")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let total = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("total_findings"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let critical = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("critical"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let high = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("high"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = res.success && total <= max_findings;
     CheckResult {
         name: "sast".into(),
@@ -3643,10 +4411,22 @@ fn check_sast(path: &str, recursive: bool, max_findings: usize) -> CheckResult {
 fn check_crypto(path: &str, recursive: bool, max_findings: usize) -> CheckResult {
     let max_str = format!("{}", max_findings);
     let mut args = vec![path, "--format", "json", "--max-findings", &max_str];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("crypto-check", "cryptocheck", &args, Instant::now());
-    let total = res.data.get("summary").and_then(|s| s.get("total_findings")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let critical = res.data.get("summary").and_then(|s| s.get("critical")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let total = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("total_findings"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let critical = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("critical"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = res.success && total <= max_findings;
     CheckResult {
         name: "crypto".into(),
@@ -3670,8 +4450,18 @@ fn check_licenses(path: &str, max_violations: usize) -> CheckResult {
     let max_str = format!("{}", max_violations);
     let args = vec![path, "--format", "json", "--max-violations", &max_str];
     let res = run_tool("licenses", "licenses", &args, Instant::now());
-    let violations = res.data.get("summary").and_then(|s| s.get("violations")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let total = res.data.get("summary").and_then(|s| s.get("packages_scanned")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let violations = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("violations"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let total = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("packages_scanned"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = res.success && violations <= max_violations;
     CheckResult {
         name: "licenses".into(),
@@ -3725,14 +4515,24 @@ fn check_outdated(path: &str, max_major_behind: usize) -> CheckResult {
             json.get("dependencies")
                 .and_then(|d| d.as_array())
                 .map(|deps| {
-                    deps.iter().filter(|dep| {
-                        let latest = dep.get("latest").and_then(|v| v.as_str()).unwrap_or("");
-                        let current = dep.get("project").and_then(|v| v.as_str()).unwrap_or("");
-                        // Count as major-behind if first semver segment differs
-                        let lat_major = latest.split('.').next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-                        let cur_major = current.split('.').next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-                        lat_major > cur_major
-                    }).count()
+                    deps.iter()
+                        .filter(|dep| {
+                            let latest = dep.get("latest").and_then(|v| v.as_str()).unwrap_or("");
+                            let current = dep.get("project").and_then(|v| v.as_str()).unwrap_or("");
+                            // Count as major-behind if first semver segment differs
+                            let lat_major = latest
+                                .split('.')
+                                .next()
+                                .and_then(|s| s.parse::<u64>().ok())
+                                .unwrap_or(0);
+                            let cur_major = current
+                                .split('.')
+                                .next()
+                                .and_then(|s| s.parse::<u64>().ok())
+                                .unwrap_or(0);
+                            lat_major > cur_major
+                        })
+                        .count()
                 })
                 .unwrap_or(0)
         }
@@ -3748,11 +4548,20 @@ fn check_outdated(path: &str, max_major_behind: usize) -> CheckResult {
         message: if major_behind == 0 {
             "All direct dependencies are within one major version".into()
         } else {
-            format!("{} direct dependencies are 1+ major versions behind latest", major_behind)
+            format!(
+                "{} direct dependencies are 1+ major versions behind latest",
+                major_behind
+            )
         },
         details: serde_json::Value::Null,
-        severity: if passed { Some("info".into()) } else { Some("low".into()) },
-        help: Some("Run `cargo update` or review Cargo.toml to upgrade outdated dependencies.".into()),
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("low".into())
+        },
+        help: Some(
+            "Run `cargo update` or review Cargo.toml to upgrade outdated dependencies.".into(),
+        ),
         rule_id: Some("dep_freshness".into()),
     }
 }
@@ -3760,10 +4569,22 @@ fn check_outdated(path: &str, max_major_behind: usize) -> CheckResult {
 fn check_typecov(path: &str, recursive: bool, min_pct: f64) -> CheckResult {
     let min_pct_str = format!("{}", min_pct);
     let mut args = vec![path, "--format", "json", "--min-pct", &min_pct_str];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("type-coverage", "typecov", &args, Instant::now());
-    let overall = res.data.get("summary").and_then(|s| s.get("overall_coverage_pct")).and_then(|v| v.as_f64()).unwrap_or(100.0);
-    let below = res.data.get("summary").and_then(|s| s.get("files_below_threshold")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let overall = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("overall_coverage_pct"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(100.0);
+    let below = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("files_below_threshold"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = below == 0;
     CheckResult {
         name: "typecov".into(),
@@ -3773,11 +4594,20 @@ fn check_typecov(path: &str, recursive: bool, min_pct: f64) -> CheckResult {
         message: if passed {
             format!("Type coverage {:.1}% >= {:.0}%", overall, min_pct)
         } else {
-            format!("{} files below type coverage threshold of {:.0}%", below, min_pct)
+            format!(
+                "{} files below type coverage threshold of {:.0}%",
+                below, min_pct
+            )
         },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("medium".into()) },
-        help: Some("Add type annotations to Python/JS/TS functions for better maintainability.".into()),
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("medium".into())
+        },
+        help: Some(
+            "Add type annotations to Python/JS/TS functions for better maintainability.".into(),
+        ),
         rule_id: Some("typecov_limit".into()),
     }
 }
@@ -3785,11 +4615,34 @@ fn check_typecov(path: &str, recursive: bool, min_pct: f64) -> CheckResult {
 fn check_vulnscan(path: &str, max_critical: usize, max_high: usize) -> CheckResult {
     let max_critical_str = format!("{}", max_critical);
     let max_high_str = format!("{}", max_high);
-    let args = vec![path, "--format", "json", "--max-critical", &max_critical_str, "--max-high", &max_high_str];
+    let args = vec![
+        path,
+        "--format",
+        "json",
+        "--max-critical",
+        &max_critical_str,
+        "--max-high",
+        &max_high_str,
+    ];
     let res = run_tool("vuln-scan", "vulnscan", &args, Instant::now());
-    let critical = res.data.get("summary").and_then(|s| s.get("critical")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let high = res.data.get("summary").and_then(|s| s.get("high")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let total = res.data.get("summary").and_then(|s| s.get("total")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let critical = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("critical"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let high = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("high"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let total = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("total"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = res.success && critical <= max_critical && high <= max_high;
     CheckResult {
         name: "vulnscan".into(),
@@ -3797,26 +4650,55 @@ fn check_vulnscan(path: &str, max_critical: usize, max_high: usize) -> CheckResu
         score: Some(total as f64),
         threshold: Some(max_critical as f64),
         message: if !res.success {
-            res.error.clone().unwrap_or_else(|| "vulnscan failed".into())
+            res.error
+                .clone()
+                .unwrap_or_else(|| "vulnscan failed".into())
         } else if passed {
-            if total == 0 { "No known vulnerabilities".into() }
-            else { format!("{} vulnerabilities ({} critical, {} high) within allowed thresholds", total, critical, high) }
+            if total == 0 {
+                "No known vulnerabilities".into()
+            } else {
+                format!(
+                    "{} vulnerabilities ({} critical, {} high) within allowed thresholds",
+                    total, critical, high
+                )
+            }
         } else {
-            format!("{} critical + {} high CVEs exceed allowed thresholds ({}/{})", critical, high, max_critical, max_high)
+            format!(
+                "{} critical + {} high CVEs exceed allowed thresholds ({}/{})",
+                critical, high, max_critical, max_high
+            )
         },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("high".into()) },
-        help: Some("Update vulnerable dependencies. Run cargo audit / npm audit for details.".into()),
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("high".into())
+        },
+        help: Some(
+            "Update vulnerable dependencies. Run cargo audit / npm audit for details.".into(),
+        ),
         rule_id: Some("vuln_limit".into()),
     }
 }
 
 fn check_cohesion(path: &str, recursive: bool, max_violations: usize) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("cohesion", "cohesion", &args, Instant::now());
-    let violations = res.data.get("summary").and_then(|s| s.get("violations")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let avg_lcom = res.data.get("summary").and_then(|s| s.get("avg_lcom")).and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let violations = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("violations"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let avg_lcom = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("avg_lcom"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0);
     let passed = violations <= max_violations;
     CheckResult {
         name: "cohesion".into(),
@@ -3824,13 +4706,26 @@ fn check_cohesion(path: &str, recursive: bool, max_violations: usize) -> CheckRe
         score: Some(avg_lcom),
         threshold: Some(max_violations as f64),
         message: if passed {
-            if violations == 0 { format!("All structs cohesive (avg LCOM4 {:.2})", avg_lcom) }
-            else { format!("{} cohesion violations <= allowed {} (avg LCOM4 {:.2})", violations, max_violations, avg_lcom) }
+            if violations == 0 {
+                format!("All structs cohesive (avg LCOM4 {:.2})", avg_lcom)
+            } else {
+                format!(
+                    "{} cohesion violations <= allowed {} (avg LCOM4 {:.2})",
+                    violations, max_violations, avg_lcom
+                )
+            }
         } else {
-            format!("{} structs exceed LCOM4 threshold of {}", violations, max_violations)
+            format!(
+                "{} structs exceed LCOM4 threshold of {}",
+                violations, max_violations
+            )
         },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("warning".into()) },
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("warning".into())
+        },
         help: Some("High LCOM4 means a struct does too many unrelated things. Split it.".into()),
         rule_id: Some("cohesion_lcom4".into()),
     }
@@ -3839,10 +4734,22 @@ fn check_cohesion(path: &str, recursive: bool, max_violations: usize) -> CheckRe
 fn check_comments(path: &str, recursive: bool, min_ratio: f64) -> CheckResult {
     let min_ratio_str = format!("{}", min_ratio);
     let mut args = vec![path, "--format", "json", "--min-ratio", &min_ratio_str];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("comment-ratio", "comments", &args, Instant::now());
-    let below = res.data.get("summary").and_then(|s| s.get("files_below_threshold")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let overall = res.data.get("summary").and_then(|s| s.get("overall_comment_ratio")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let below = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("files_below_threshold"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let overall = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("overall_comment_ratio"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let passed = below == 0;
     CheckResult {
         name: "comments".into(),
@@ -3863,9 +4770,16 @@ fn check_comments(path: &str, recursive: bool, min_ratio: f64) -> CheckResult {
 
 fn check_errhandle(path: &str, recursive: bool, max_violations: usize) -> CheckResult {
     let mut args = vec![path, "--format", "json"];
-    if recursive { args.push("--recursive"); }
+    if recursive {
+        args.push("--recursive");
+    }
     let res = run_tool("error-handling", "errhandle", &args, Instant::now());
-    let total = res.data.get("summary").and_then(|s| s.get("total_findings")).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let total = res
+        .data
+        .get("summary")
+        .and_then(|s| s.get("total_findings"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     let passed = total <= max_violations;
     CheckResult {
         name: "errhandle".into(),
@@ -3873,14 +4787,29 @@ fn check_errhandle(path: &str, recursive: bool, max_violations: usize) -> CheckR
         score: Some(total as f64),
         threshold: Some(max_violations as f64),
         message: if passed {
-            if total == 0 { "No error handling issues detected".into() }
-            else { format!("{} error handling findings <= allowed {}", total, max_violations) }
+            if total == 0 {
+                "No error handling issues detected".into()
+            } else {
+                format!(
+                    "{} error handling findings <= allowed {}",
+                    total, max_violations
+                )
+            }
         } else {
-            format!("{} error handling violations > allowed {}", total, max_violations)
+            format!(
+                "{} error handling violations > allowed {}",
+                total, max_violations
+            )
         },
         details: res.data.clone(),
-        severity: if passed { Some("info".into()) } else { Some("medium".into()) },
-        help: Some("Replace .unwrap()/.expect() with proper error propagation using `?` or match.".into()),
+        severity: if passed {
+            Some("info".into())
+        } else {
+            Some("medium".into())
+        },
+        help: Some(
+            "Replace .unwrap()/.expect() with proper error propagation using `?` or match.".into(),
+        ),
         rule_id: Some("errhandle_limit".into()),
     }
 }
@@ -3895,8 +4824,14 @@ fn diff_command(before_path: &str, after_path: &str) -> i32 {
             .ok()
     };
 
-    let before = match load(before_path) { Some(r) => r, None => return 2 };
-    let after  = match load(after_path)  { Some(r) => r, None => return 2 };
+    let before = match load(before_path) {
+        Some(r) => r,
+        None => return 2,
+    };
+    let after = match load(after_path) {
+        Some(r) => r,
+        None => return 2,
+    };
 
     let mut regressions: Vec<&str> = Vec::new();
     let mut fixes: Vec<&str> = Vec::new();
@@ -3908,38 +4843,74 @@ fn diff_command(before_path: &str, after_path: &str) -> i32 {
             match (bc.passed, ac.passed) {
                 (true, false) => regressions.push(&ac.name),
                 (false, true) => fixes.push(&ac.name),
-                (true, true)  => unchanged_pass += 1,
+                (true, true) => unchanged_pass += 1,
                 (false, false) => unchanged_fail += 1,
             }
         }
     }
 
-    let new_checks: Vec<&str> = after.checks.iter()
+    let new_checks: Vec<&str> = after
+        .checks
+        .iter()
         .filter(|ac| !before.checks.iter().any(|bc| bc.name == ac.name))
         .map(|ac| ac.name.as_str())
         .collect();
 
     eprintln!();
-    eprintln!("  {} {} → {}", "diff".bright_black(), before_path.cyan(), after_path.cyan());
+    eprintln!(
+        "  {} {} → {}",
+        "diff".bright_black(),
+        before_path.cyan(),
+        after_path.cyan()
+    );
     eprintln!();
 
     if regressions.is_empty() && fixes.is_empty() && new_checks.is_empty() {
-        eprintln!("  {} No changes — {} pass, {} fail (unchanged)", "◉".bright_black(), unchanged_pass, unchanged_fail);
+        eprintln!(
+            "  {} No changes — {} pass, {} fail (unchanged)",
+            "◉".bright_black(),
+            unchanged_pass,
+            unchanged_fail
+        );
     } else {
         for name in &fixes {
-            eprintln!("  {} {} {}", "↑".green().bold(), name.green().bold(), "now passing".green());
+            eprintln!(
+                "  {} {} {}",
+                "↑".green().bold(),
+                name.green().bold(),
+                "now passing".green()
+            );
         }
         for name in &regressions {
-            eprintln!("  {} {} {}", "↓".red().bold(), name.red().bold(), "now failing".red());
+            eprintln!(
+                "  {} {} {}",
+                "↓".red().bold(),
+                name.red().bold(),
+                "now failing".red()
+            );
         }
         for name in &new_checks {
-            let status = after.checks.iter().find(|c| c.name == *name).map(|c| c.passed).unwrap_or(false);
-            let icon = if status { "✓".green().bold().to_string() } else { "✗".red().bold().to_string() };
+            let status = after
+                .checks
+                .iter()
+                .find(|c| c.name == *name)
+                .map(|c| c.passed)
+                .unwrap_or(false);
+            let icon = if status {
+                "✓".green().bold().to_string()
+            } else {
+                "✗".red().bold().to_string()
+            };
             eprintln!("  {} {} {}", icon, name, "(new check)".bright_black());
         }
         eprintln!();
         if unchanged_pass > 0 || unchanged_fail > 0 {
-            eprintln!("  {} {} unchanged passing, {} unchanged failing", "◉".bright_black(), unchanged_pass, unchanged_fail);
+            eprintln!(
+                "  {} {} unchanged passing, {} unchanged failing",
+                "◉".bright_black(),
+                unchanged_pass,
+                unchanged_fail
+            );
         }
     }
 
@@ -3952,10 +4923,19 @@ fn diff_command(before_path: &str, after_path: &str) -> i32 {
         format!("{}/100 ({})", s, g)
     };
     eprintln!();
-    eprintln!("  {} Health: {} → {}", "▶".cyan(), score_before.bright_black(), score_after.cyan().bold());
+    eprintln!(
+        "  {} Health: {} → {}",
+        "▶".cyan(),
+        score_before.bright_black(),
+        score_after.cyan().bold()
+    );
     eprintln!();
 
-    if regressions.is_empty() { 0 } else { 1 }
+    if regressions.is_empty() {
+        0
+    } else {
+        1
+    }
 }
 
 fn open_in_browser(path: &str) {
@@ -3964,7 +4944,9 @@ fn open_in_browser(path: &str) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(path).spawn();
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd").args(["/c", "start", path]).spawn();
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", path])
+        .spawn();
 }
 
 fn report_command(
@@ -3980,11 +4962,17 @@ fn report_command(
     let check_report: CheckReport = if let Some(json_path) = from_json {
         let content = match std::fs::read_to_string(json_path) {
             Ok(c) => c,
-            Err(e) => { eprintln!("Error reading {}: {}", json_path, e); return 2; }
+            Err(e) => {
+                eprintln!("Error reading {}: {}", json_path, e);
+                return 2;
+            }
         };
         match serde_json::from_str(&content) {
             Ok(r) => r,
-            Err(e) => { eprintln!("Error parsing JSON: {}", e); return 2; }
+            Err(e) => {
+                eprintln!("Error parsing JSON: {}", e);
+                return 2;
+            }
         }
     } else {
         // Run codemetrics check internally
@@ -3994,10 +4982,12 @@ fn report_command(
             args.push("--skip");
             args.push(s);
         }
-        let output_bytes = std::process::Command::new(std::env::current_exe().unwrap_or_else(|_| "codemetrics".into()))
-            .arg("check")
-            .args(&args)
-            .output();
+        let output_bytes = std::process::Command::new(
+            std::env::current_exe().unwrap_or_else(|_| "codemetrics".into()),
+        )
+        .arg("check")
+        .args(&args)
+        .output();
         match output_bytes {
             Ok(o) => {
                 let stdout = String::from_utf8_lossy(&o.stdout);
@@ -4009,18 +4999,28 @@ fn report_command(
                     }
                 }
             }
-            Err(e) => { eprintln!("Failed to run checks: {}", e); return 2; }
+            Err(e) => {
+                eprintln!("Failed to run checks: {}", e);
+                return 2;
+            }
         }
     };
 
     let project_name = project
         .map(|s| s.to_string())
-        .or_else(|| std::fs::canonicalize(path).ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string())))
+        .or_else(|| {
+            std::fs::canonicalize(path)
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        })
         .unwrap_or_else(|| path.to_string());
 
     let now = {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let hh = (secs % 86400) / 3600;
         let mm = (secs % 3600) / 60;
         // Correct Gregorian calendar from Unix timestamp
@@ -4029,19 +5029,43 @@ fn report_command(
         loop {
             let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
             let y_days = if leap { 366 } else { 365 };
-            if days < y_days { break; }
+            if days < y_days {
+                break;
+            }
             days -= y_days;
             year += 1;
         }
         let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-        let month_days = [31i64,if leap {29}else{28},31,30,31,30,31,31,30,31,30,31];
+        let month_days = [
+            31i64,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
         let mut month = 0usize;
         for &md in &month_days {
-            if days < md { break; }
+            if days < md {
+                break;
+            }
             days -= md;
             month += 1;
         }
-        format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", year, month + 1, days + 1, hh, mm)
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02} UTC",
+            year,
+            month + 1,
+            days + 1,
+            hh,
+            mm
+        )
     };
 
     let passed = check_report.passed;
@@ -4050,75 +5074,167 @@ fn report_command(
     let failed_n = check_report.summary.failed_checks;
 
     // Categorise checks by domain
-    let security_tools = ["secrets", "vulnscan", "taint", "errhandle", "sast", "crypto"];
+    let security_tools = [
+        "secrets",
+        "vulnscan",
+        "taint",
+        "errhandle",
+        "sast",
+        "crypto",
+    ];
     let compliance_tools = ["licenses", "sbom"];
-    let quality_tools = ["crap", "debt", "doc_coverage", "complexity", "duplication", "cohesion", "coupling", "riskmap", "linelen", "halstead", "deadcode", "comments", "propcov", "fuzz", "typecov"];
+    let quality_tools = [
+        "crap",
+        "debt",
+        "doc_coverage",
+        "complexity",
+        "duplication",
+        "cohesion",
+        "coupling",
+        "riskmap",
+        "linelen",
+        "halstead",
+        "deadcode",
+        "comments",
+        "propcov",
+        "fuzz",
+        "typecov",
+    ];
 
     match format {
         "markdown" | "md" => {
-            let md = render_markdown_report(&check_report, &project_name, &now, &security_tools, &quality_tools, &compliance_tools);
+            let md = render_markdown_report(
+                &check_report,
+                &project_name,
+                &now,
+                &security_tools,
+                &quality_tools,
+                &compliance_tools,
+            );
             let out_path = output.unwrap_or("codemetrics-report.md");
             std::fs::write(out_path, &md).expect("Failed to write report");
             eprintln!("  {} Report written to {}", "✓".green().bold(), out_path);
-            if open { open_in_browser(out_path); }
+            if open {
+                open_in_browser(out_path);
+            }
         }
         "pdf" => {
             // Render HTML first, then convert via headless Chrome/Chromium
-            let html = render_html_report(&check_report, &project_name, &now, &security_tools, &quality_tools, &compliance_tools);
+            let html = render_html_report(
+                &check_report,
+                &project_name,
+                &now,
+                &security_tools,
+                &quality_tools,
+                &compliance_tools,
+            );
             let html_tmp = "/tmp/codemetrics-report-tmp.html";
             std::fs::write(html_tmp, &html).expect("Failed to write temp HTML");
             let pdf_path = output.unwrap_or("codemetrics-report.pdf");
-            let browser = ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"]
-                .iter()
-                .find(|b| std::process::Command::new(b).arg("--version").output().map(|o| o.status.success()).unwrap_or(false))
-                .copied();
+            let browser = [
+                "chromium",
+                "chromium-browser",
+                "google-chrome",
+                "google-chrome-stable",
+            ]
+            .iter()
+            .find(|b| {
+                std::process::Command::new(b)
+                    .arg("--version")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+            })
+            .copied();
             match browser {
                 Some(bin) => {
                     let abs_html = std::fs::canonicalize(html_tmp)
                         .map(|p| format!("file://{}", p.display()))
                         .unwrap_or_else(|_| format!("file://{}", html_tmp));
                     let result = std::process::Command::new(bin)
-                        .args(["--headless", "--disable-gpu", "--no-sandbox",
-                               &format!("--print-to-pdf={}", pdf_path), &abs_html])
+                        .args([
+                            "--headless",
+                            "--disable-gpu",
+                            "--no-sandbox",
+                            &format!("--print-to-pdf={}", pdf_path),
+                            &abs_html,
+                        ])
                         .output();
                     match result {
                         Ok(o) if o.status.success() => {
                             eprintln!("  {} Report written to {}", "✓".green().bold(), pdf_path);
-                            if open { open_in_browser(pdf_path); }
+                            if open {
+                                open_in_browser(pdf_path);
+                            }
                         }
                         Ok(o) => {
                             let err = String::from_utf8_lossy(&o.stderr);
-                            eprintln!("  {} PDF conversion failed: {}", "✗".red().bold(), err.lines().next().unwrap_or("unknown error"));
+                            eprintln!(
+                                "  {} PDF conversion failed: {}",
+                                "✗".red().bold(),
+                                err.lines().next().unwrap_or("unknown error")
+                            );
                             eprintln!("  {} HTML saved to {}", "ℹ".cyan(), html_tmp);
                         }
                         Err(e) => eprintln!("  {} Could not run {}: {}", "✗".red().bold(), bin, e),
                     }
                 }
                 None => {
-                    eprintln!("  {} No Chromium/Chrome found — falling back to HTML", "!".yellow().bold());
+                    eprintln!(
+                        "  {} No Chromium/Chrome found — falling back to HTML",
+                        "!".yellow().bold()
+                    );
                     let out_path = output.unwrap_or("codemetrics-report.html");
                     std::fs::write(out_path, &html).expect("Failed to write HTML report");
                     eprintln!("  {} Report written to {}", "✓".green().bold(), out_path);
-                    if open { open_in_browser(out_path); }
+                    if open {
+                        open_in_browser(out_path);
+                    }
                 }
             }
         }
         _ => {
-            let html = render_html_report(&check_report, &project_name, &now, &security_tools, &quality_tools, &compliance_tools);
+            let html = render_html_report(
+                &check_report,
+                &project_name,
+                &now,
+                &security_tools,
+                &quality_tools,
+                &compliance_tools,
+            );
             let out_path = output.unwrap_or("codemetrics-report.html");
             std::fs::write(out_path, &html).expect("Failed to write report");
             eprintln!("  {} Report written to {}", "✓".green().bold(), out_path);
-            eprintln!("  {} {} checks: {}/{} passed", if passed { "✓".green().bold() } else { "✗".red().bold() }, total, passed_n, total);
-            if open { open_in_browser(out_path); }
+            eprintln!(
+                "  {} {} checks: {}/{} passed",
+                if passed {
+                    "✓".green().bold()
+                } else {
+                    "✗".red().bold()
+                },
+                total,
+                passed_n,
+                total
+            );
+            if open {
+                open_in_browser(out_path);
+            }
         }
     }
 
     let _ = (passed_n, failed_n);
-    if passed { 0 } else { 1 }
+    if passed {
+        0
+    } else {
+        1
+    }
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn severity_color_html(sev: &str) -> &'static str {
@@ -4134,28 +5250,52 @@ fn severity_badge(sev: &str) -> String {
     let color = severity_color_html(sev);
     format!(
         r#"<span style="background:{c};color:#fff;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em">{s}</span>"#,
-        c = color, s = sev
+        c = color,
+        s = sev
     )
 }
 
 /// Build a collapsible offender list from CheckResult.details JSON
 fn offender_rows_html(c: &CheckResult) -> String {
-    let arrays = ["items", "functions", "findings", "violations", "secrets", "duplicates"];
+    let arrays = [
+        "items",
+        "functions",
+        "findings",
+        "violations",
+        "secrets",
+        "duplicates",
+    ];
     for key in &arrays {
         if let Some(arr) = c.details.get(key).and_then(|v| v.as_array()) {
-            if arr.is_empty() { continue; }
+            if arr.is_empty() {
+                continue;
+            }
             let mut rows = String::new();
             for item in arr.iter().take(10) {
                 let file = item.get("file").and_then(|v| v.as_str()).unwrap_or("");
-                let line = item.get("line").and_then(|v| v.as_u64()).map(|l| format!(":{}", l)).unwrap_or_default();
-                let desc = item.get("context")
+                let line = item
+                    .get("line")
+                    .and_then(|v| v.as_u64())
+                    .map(|l| format!(":{}", l))
+                    .unwrap_or_default();
+                let desc = item
+                    .get("context")
                     .or_else(|| item.get("kind"))
                     .or_else(|| item.get("name"))
                     .or_else(|| item.get("type"))
                     .or_else(|| item.get("message"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
-                let loc = if file.is_empty() { String::new() } else { format!("{}{}", file, line) };
-                let desc_trunc = if desc.len() > 80 { format!("{}…", &desc[..80]) } else { desc.to_string() };
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let loc = if file.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}{}", file, line)
+                };
+                let desc_trunc = if desc.len() > 80 {
+                    format!("{}…", &desc[..80])
+                } else {
+                    desc.to_string()
+                };
                 rows.push_str(&format!(
                     r#"<div style="display:flex;gap:12px;padding:4px 0;border-bottom:1px solid #f3f4f6;font-size:12px">
   <span style="color:#6366f1;font-family:monospace;white-space:nowrap;min-width:180px">{}</span>
@@ -4165,8 +5305,13 @@ fn offender_rows_html(c: &CheckResult) -> String {
                 ));
             }
             let more = if arr.len() > 10 {
-                format!(r#"<div style="font-size:12px;color:#9ca3af;padding-top:6px">… {} more findings</div>"#, arr.len() - 10)
-            } else { String::new() };
+                format!(
+                    r#"<div style="font-size:12px;color:#9ca3af;padding-top:6px">… {} more findings</div>"#,
+                    arr.len() - 10
+                )
+            } else {
+                String::new()
+            };
             return format!(
                 r#"<details style="margin-top:8px">
 <summary style="font-size:12px;color:#6366f1;cursor:pointer;user-select:none;padding:4px 0">▶ Show {} finding{}</summary>
@@ -4176,7 +5321,8 @@ fn offender_rows_html(c: &CheckResult) -> String {
 </details>"#,
                 arr.len().min(10),
                 if arr.len() == 1 { "" } else { "s" },
-                rows, more
+                rows,
+                more
             );
         }
     }
@@ -4195,7 +5341,11 @@ fn check_row_html(c: &CheckResult) -> String {
         (Some(s), None) => format!("{:.1}", s),
         _ => "&#8212;".to_string(),
     };
-    let offenders = if !c.passed { offender_rows_html(c) } else { String::new() };
+    let offenders = if !c.passed {
+        offender_rows_html(c)
+    } else {
+        String::new()
+    };
     let msg_cell = format!(
         "<div style=\"font-size:13px;color:#374151\">{msg}</div><div style=\"font-size:11px;color:#9ca3af;margin-top:3px\">{help}</div>{off}",
         msg = html_escape(&c.message), help = html_escape(help), off = offenders
@@ -4214,10 +5364,18 @@ fn donut_svg(pct: f64, color: &str) -> String {
     let gap = circ - dash;
     let pct_int = pct as u32;
     // Build without format! to avoid Rust 2021 prefixed-literal issues with HTML
-    let mut s = String::from(r#"<svg viewBox="0 0 100 100" width="120" height="120" style="display:block">"#);
+    let mut s = String::from(
+        r#"<svg viewBox="0 0 100 100" width="120" height="120" style="display:block">"#,
+    );
     s.push_str(&format!("\n  <circle cx=\"50\" cy=\"50\" r=\"44\" fill=\"none\" stroke=\"#e5e7eb\" stroke-width=\"10\"/>\n"));
-    s.push_str(&format!("  <circle cx=\"50\" cy=\"50\" r=\"44\" fill=\"none\" stroke=\"{}\" stroke-width=\"10\"\n", color));
-    s.push_str(&format!("    stroke-dasharray=\"{:.2} {:.2}\" stroke-dashoffset=\"69.12\"\n", dash, gap));
+    s.push_str(&format!(
+        "  <circle cx=\"50\" cy=\"50\" r=\"44\" fill=\"none\" stroke=\"{}\" stroke-width=\"10\"\n",
+        color
+    ));
+    s.push_str(&format!(
+        "    stroke-dasharray=\"{:.2} {:.2}\" stroke-dashoffset=\"69.12\"\n",
+        dash, gap
+    ));
     s.push_str("    stroke-linecap=\"round\" transform=\"rotate(-90 50 50)\"/>\n");
     s.push_str(&format!("  <text x=\"50\" y=\"46\" text-anchor=\"middle\" font-size=\"18\" font-weight=\"800\" fill=\"{}\" font-family=\"system-ui\">{}%</text>\n", color, pct_int));
     s.push_str("  <text x=\"50\" y=\"60\" text-anchor=\"middle\" font-size=\"9\" fill=\"#9ca3af\" font-family=\"system-ui\">pass rate</text>\n");
@@ -4227,7 +5385,9 @@ fn donut_svg(pct: f64, color: &str) -> String {
 
 /// Inline horizontal mini-bar for a category (e.g. "6/8 ██████░░")
 fn mini_bar(pass: usize, total: usize, color: &str) -> String {
-    if total == 0 { return String::new(); }
+    if total == 0 {
+        return String::new();
+    }
     let filled = (pass * 12) / total;
     let bar: String = "█".repeat(filled) + &"░".repeat(12 - filled);
     let pct = pass * 100 / total;
@@ -4248,10 +5408,16 @@ fn render_html_report(
     let (health, grade) = health_score(&report.checks);
     let overall_color = if report.passed { "#22c55e" } else { "#ef4444" };
     let overall_label = if report.passed { "PASSED" } else { "FAILED" };
-    let pct = if report.summary.total_checks == 0 { 100.0 }
-        else { report.summary.passed_checks as f64 / report.summary.total_checks as f64 * 100.0 };
+    let pct = if report.summary.total_checks == 0 {
+        100.0
+    } else {
+        report.summary.passed_checks as f64 / report.summary.total_checks as f64 * 100.0
+    };
     let grade_color = match grade {
-        'A' => "#22c55e", 'B' => "#06b6d4", 'C' => "#f59e0b", _ => "#ef4444",
+        'A' => "#22c55e",
+        'B' => "#06b6d4",
+        'C' => "#f59e0b",
+        _ => "#ef4444",
     };
 
     // Split checks by category
@@ -4260,10 +5426,15 @@ fn render_html_report(
     let mut comp_checks: Vec<&CheckResult> = Vec::new();
     let mut other_checks: Vec<&CheckResult> = Vec::new();
     for c in &report.checks {
-        if security_tools.contains(&c.name.as_str()) { sec_checks.push(c); }
-        else if compliance_tools.contains(&c.name.as_str()) { comp_checks.push(c); }
-        else if quality_tools.contains(&c.name.as_str()) { qual_checks.push(c); }
-        else { other_checks.push(c); }
+        if security_tools.contains(&c.name.as_str()) {
+            sec_checks.push(c);
+        } else if compliance_tools.contains(&c.name.as_str()) {
+            comp_checks.push(c);
+        } else if quality_tools.contains(&c.name.as_str()) {
+            qual_checks.push(c);
+        } else {
+            other_checks.push(c);
+        }
     }
     qual_checks.extend(other_checks);
 
@@ -4271,21 +5442,46 @@ fn render_html_report(
     let sec_pass = sec_checks.iter().filter(|c| c.passed).count();
     let qual_pass = qual_checks.iter().filter(|c| c.passed).count();
     let comp_pass = comp_checks.iter().filter(|c| c.passed).count();
-    let sec_col = if sec_pass == sec_checks.len() { "#22c55e" } else { "#ef4444" };
-    let qual_col = if qual_pass == qual_checks.len() { "#22c55e" } else { "#ef4444" };
-    let comp_col = if comp_pass == comp_checks.len() { "#22c55e" } else { "#ef4444" };
+    let sec_col = if sec_pass == sec_checks.len() {
+        "#22c55e"
+    } else {
+        "#ef4444"
+    };
+    let qual_col = if qual_pass == qual_checks.len() {
+        "#22c55e"
+    } else {
+        "#ef4444"
+    };
+    let comp_col = if comp_pass == comp_checks.len() {
+        "#22c55e"
+    } else {
+        "#ef4444"
+    };
 
     let failed_checks: Vec<&CheckResult> = report.checks.iter().filter(|c| !c.passed).collect();
 
     // ── Executive summary ────────────────────────────────────
-    let risk_domain = if sec_checks.iter().any(|c| !c.passed) { "security" }
-        else if comp_checks.iter().any(|c| !c.passed) { "compliance" }
-        else if qual_checks.iter().any(|c| !c.passed) { "code quality" }
-        else { "none" };
+    let risk_domain = if sec_checks.iter().any(|c| !c.passed) {
+        "security"
+    } else if comp_checks.iter().any(|c| !c.passed) {
+        "compliance"
+    } else if qual_checks.iter().any(|c| !c.passed) {
+        "code quality"
+    } else {
+        "none"
+    };
     let exec_verdict = if report.passed {
         format!("This codebase passed all {} checks with a health score of {}/100 (grade {}). No critical findings were detected across security, quality, or compliance domains.", report.summary.total_checks, health, grade)
     } else {
-        let high_count = failed_checks.iter().filter(|c| matches!(c.severity.as_deref(), Some("high") | Some("critical") | Some("error"))).count();
+        let high_count = failed_checks
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.severity.as_deref(),
+                    Some("high") | Some("critical") | Some("error")
+                )
+            })
+            .count();
         format!(
             "{} of {} checks failed, concentrated in {}. {} finding{} rated high/critical severity require immediate attention before the next release.",
             failed_checks.len(), report.summary.total_checks, risk_domain,
@@ -4295,18 +5491,25 @@ fn render_html_report(
     let top3: Vec<&CheckResult> = {
         let mut sorted = failed_checks.clone();
         sorted.sort_by_key(|c| match c.severity.as_deref() {
-            Some("critical") => 0, Some("high") | Some("error") => 1,
-            Some("medium") | Some("warning") => 2, _ => 3,
+            Some("critical") => 0,
+            Some("high") | Some("error") => 1,
+            Some("medium") | Some("warning") => 2,
+            _ => 3,
         });
         sorted.into_iter().take(3).collect()
     };
     let top3_html = if top3.is_empty() {
-        r#"<p style="color:#22c55e;font-size:14px">✓ No action items — all checks passed.</p>"#.to_string()
+        r#"<p style="color:#22c55e;font-size:14px">✓ No action items — all checks passed.</p>"#
+            .to_string()
     } else {
         let mut h = String::new();
         for (i, c) in top3.iter().enumerate() {
             let sev = c.severity.as_deref().unwrap_or("medium");
-            let effort = match sev { "critical" | "high" | "error" => "High effort", "medium" | "warning" => "Medium effort", _ => "Low effort" };
+            let effort = match sev {
+                "critical" | "high" | "error" => "High effort",
+                "medium" | "warning" => "Medium effort",
+                _ => "Low effort",
+            };
             let help = c.help.as_deref().unwrap_or("Review and fix flagged items.");
             h.push_str(&format!(
                 r#"<div style="display:flex;gap:14px;padding:12px 0;border-bottom:1px solid #f3f4f6;align-items:flex-start">
@@ -4330,13 +5533,22 @@ fn render_html_report(
         let mut rows = String::new();
         let mut sorted_failed = failed_checks.clone();
         sorted_failed.sort_by_key(|c| match c.severity.as_deref() {
-            Some("critical") => 0, Some("high") | Some("error") => 1,
-            Some("medium") | Some("warning") => 2, _ => 3,
+            Some("critical") => 0,
+            Some("high") | Some("error") => 1,
+            Some("medium") | Some("warning") => 2,
+            _ => 3,
         });
         for (i, c) in sorted_failed.iter().enumerate() {
             let sev = c.severity.as_deref().unwrap_or("medium");
-            let effort = match sev { "critical" | "high" | "error" => "High", "medium" | "warning" => "Medium", _ => "Low" };
-            let help = c.help.as_deref().unwrap_or("Review and fix the flagged items.");
+            let effort = match sev {
+                "critical" | "high" | "error" => "High",
+                "medium" | "warning" => "Medium",
+                _ => "Low",
+            };
+            let help = c
+                .help
+                .as_deref()
+                .unwrap_or("Review and fix the flagged items.");
             rows.push_str(&format!(
                 r#"<tr style="border-bottom:1px solid #f3f4f6">
   <td style="padding:10px 14px;font-weight:700;color:#9ca3af">{}</td>
@@ -4345,22 +5557,31 @@ fn render_html_report(
   <td style="padding:10px 14px;font-size:12px;color:#6b7280">{}</td>
   <td style="padding:10px 14px;font-size:12px;color:#6b7280">{}</td>
 </tr>"#,
-                i + 1, html_escape(&c.name), severity_badge(sev), effort, html_escape(help),
+                i + 1,
+                html_escape(&c.name),
+                severity_badge(sev),
+                effort,
+                html_escape(help),
             ));
         }
-        format!(r#"<table style="width:100%;border-collapse:collapse;font-size:13px">
+        format!(
+            r#"<table style="width:100%;border-collapse:collapse;font-size:13px">
 <thead><tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb">
   <th style="padding:8px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600">#</th>
   <th style="padding:8px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600">Check</th>
   <th style="padding:8px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600">Severity</th>
   <th style="padding:8px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600">Effort</th>
   <th style="padding:8px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600">Action</th>
-</tr></thead><tbody>{rows}</tbody></table>"#, rows = rows)
+</tr></thead><tbody>{rows}</tbody></table>"#,
+            rows = rows
+        )
     };
 
     // ── Section builder ───────────────────────────────────────
     fn section_html(title: &str, icon: &str, anchor: &str, checks: &[&CheckResult]) -> String {
-        if checks.is_empty() { return String::new(); }
+        if checks.is_empty() {
+            return String::new();
+        }
         let rows: String = checks.iter().map(|c| check_row_html(c)).collect();
         let pass_c = checks.iter().filter(|c| c.passed).count();
         let fail_c = checks.len() - pass_c;
@@ -4368,7 +5589,10 @@ fn render_html_report(
         let status_pill = if fail_c == 0 {
             r#"<span style="background:#dcfce7;color:#16a34a;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600">ALL PASSED</span>"#.to_string()
         } else {
-            format!(r#"<span style="background:#fee2e2;color:#ef4444;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600">{} FAILED</span>"#, fail_c)
+            format!(
+                r#"<span style="background:#fee2e2;color:#ef4444;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600">{} FAILED</span>"#,
+                fail_c
+            )
         };
         format!(
             "<section id=\"{anch}\" style=\"margin-bottom:40px\">\n<div style=\"display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #f3f4f6\">\n  <span style=\"font-size:22px\">{icn}</span>\n  <h2 style=\"font-size:18px;font-weight:800;color:#111827;margin:0\">{ttl}</h2>\n  <span style=\"font-size:13px;color:{sc};font-weight:600;margin-left:4px\">{ps}/{tot}</span>\n  <div style=\"margin-left:auto\">{pill}</div>\n</div>\n<div style=\"border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)\">\n<table style=\"width:100%;border-collapse:collapse;font-size:13px\">\n<thead><tr style=\"background:#f9fafb;border-bottom:2px solid #e5e7eb\">\n  <th style=\"padding:9px 14px;width:42px\"></th>\n  <th style=\"padding:9px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600\">Check</th>\n  <th style=\"padding:9px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600\">Result / Details</th>\n  <th style=\"padding:9px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600\">Score</th>\n  <th style=\"padding:9px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:#9ca3af;font-weight:600\">Sev</th>\n</tr></thead>\n<tbody>{rows}</tbody>\n</table></div></section>",
@@ -4377,12 +5601,12 @@ fn render_html_report(
         )
     }
 
-    let sec_section  = section_html("Security Checks",    "🔒", "security",   &sec_checks);
-    let qual_section = section_html("Code Quality Checks","📊", "quality",    &qual_checks);
-    let comp_section = section_html("Compliance Checks",  "📋", "compliance", &comp_checks);
+    let sec_section = section_html("Security Checks", "🔒", "security", &sec_checks);
+    let qual_section = section_html("Code Quality Checks", "📊", "quality", &qual_checks);
+    let comp_section = section_html("Compliance Checks", "📋", "compliance", &comp_checks);
 
     let donut = donut_svg(pct, overall_color);
-    let sec_bar  = mini_bar(sec_pass,  sec_checks.len(),  sec_col);
+    let sec_bar = mini_bar(sec_pass, sec_checks.len(), sec_col);
     let qual_bar = mini_bar(qual_pass, qual_checks.len(), qual_col);
     let comp_bar = mini_bar(comp_pass, comp_checks.len(), comp_col);
 
@@ -4556,8 +5780,7 @@ sections.forEach(s=>obs.observe(s));
 </body>
 </html>"##;
 
-    tmpl
-        .replace("__PROJECT__", &html_escape(project))
+    tmpl.replace("__PROJECT__", &html_escape(project))
         .replace("__DATE__", date)
         .replace("__PATH__", &html_escape(&report.path))
         .replace("__VERSION__", env!("CARGO_PKG_VERSION"))
@@ -4580,10 +5803,38 @@ sections.forEach(s=>obs.observe(s));
         .replace("__QUAL_TOTAL__", &qual_checks.len().to_string())
         .replace("__COMP_PASS__", &comp_pass.to_string())
         .replace("__COMP_TOTAL__", &comp_checks.len().to_string())
-        .replace("__SS__", if sec_pass == sec_checks.len() { "score-pass" } else { "score-fail" })
-        .replace("__QS__", if qual_pass == qual_checks.len() { "score-pass" } else { "score-fail" })
-        .replace("__CS__", if comp_pass == comp_checks.len() { "score-pass" } else { "score-fail" })
-        .replace("__OS__", if report.passed { "score-pass" } else { "score-fail" })
+        .replace(
+            "__SS__",
+            if sec_pass == sec_checks.len() {
+                "score-pass"
+            } else {
+                "score-fail"
+            },
+        )
+        .replace(
+            "__QS__",
+            if qual_pass == qual_checks.len() {
+                "score-pass"
+            } else {
+                "score-fail"
+            },
+        )
+        .replace(
+            "__CS__",
+            if comp_pass == comp_checks.len() {
+                "score-pass"
+            } else {
+                "score-fail"
+            },
+        )
+        .replace(
+            "__OS__",
+            if report.passed {
+                "score-pass"
+            } else {
+                "score-fail"
+            },
+        )
         .replace("__OL__", if report.passed { "PASS" } else { "FAIL" })
         .replace("__EXEC_VERDICT__", &html_escape(&exec_verdict))
         .replace("__TOP3_HTML__", &top3_html)
@@ -4601,9 +5852,16 @@ fn render_markdown_report(
     quality_tools: &[&str],
     compliance_tools: &[&str],
 ) -> String {
-    let overall = if report.passed { "✅ PASSED" } else { "❌ FAILED" };
-    let pct = if report.summary.total_checks == 0 { 100.0 }
-        else { report.summary.passed_checks as f64 / report.summary.total_checks as f64 * 100.0 };
+    let overall = if report.passed {
+        "✅ PASSED"
+    } else {
+        "❌ FAILED"
+    };
+    let pct = if report.summary.total_checks == 0 {
+        100.0
+    } else {
+        report.summary.passed_checks as f64 / report.summary.total_checks as f64 * 100.0
+    };
 
     let mut md = format!(
         "# CodeMetrics Audit Report — {}\n\n\
@@ -4618,9 +5876,15 @@ fn render_markdown_report(
          | Passed | {} |\n\
          | Failed | {} |\n\
          | Pass Rate | {:.0}% |\n\n",
-        project, overall, date, report.path, env!("CARGO_PKG_VERSION"),
-        report.summary.total_checks, report.summary.passed_checks,
-        report.summary.failed_checks, pct,
+        project,
+        overall,
+        date,
+        report.path,
+        env!("CARGO_PKG_VERSION"),
+        report.summary.total_checks,
+        report.summary.passed_checks,
+        report.summary.failed_checks,
+        pct,
     );
 
     let failed: Vec<&CheckResult> = report.checks.iter().filter(|c| !c.passed).collect();
@@ -4629,9 +5893,20 @@ fn render_markdown_report(
         md.push_str("| # | Check | Severity | Effort | Action |\n|---|---|---|---|---|\n");
         for (i, c) in failed.iter().enumerate() {
             let sev = c.severity.as_deref().unwrap_or("medium");
-            let effort = match sev { "critical" | "high" => "High", "medium" => "Medium", _ => "Low" };
+            let effort = match sev {
+                "critical" | "high" => "High",
+                "medium" => "Medium",
+                _ => "Low",
+            };
             let help = c.help.as_deref().unwrap_or("Review and fix.");
-            md.push_str(&format!("| {} | `{}` | {} | {} | {} |\n", i + 1, c.name, sev, effort, help));
+            md.push_str(&format!(
+                "| {} | `{}` | {} | {} | {} |\n",
+                i + 1,
+                c.name,
+                sev,
+                effort,
+                help
+            ));
         }
         md.push('\n');
     }
@@ -4642,8 +5917,14 @@ fn render_markdown_report(
         ("Compliance Checks", "📋", compliance_tools),
     ];
     for (title, icon, tools) in categories {
-        let checks: Vec<&CheckResult> = report.checks.iter().filter(|c| tools.contains(&c.name.as_str())).collect();
-        if checks.is_empty() { continue; }
+        let checks: Vec<&CheckResult> = report
+            .checks
+            .iter()
+            .filter(|c| tools.contains(&c.name.as_str()))
+            .collect();
+        if checks.is_empty() {
+            continue;
+        }
         md.push_str(&format!("## {} {}\n\n", icon, title));
         md.push_str("| Check | Status | Score | Severity | Message |\n|---|---|---|---|---|\n");
         for c in &checks {
@@ -4654,12 +5935,17 @@ fn render_markdown_report(
                 (Some(s), None) => format!("{:.1}", s),
                 _ => "—".to_string(),
             };
-            md.push_str(&format!("| `{}` | {} | {} | {} | {} |\n", c.name, status, score, sev, c.message));
+            md.push_str(&format!(
+                "| `{}` | {} | {} | {} | {} |\n",
+                c.name, status, score, sev, c.message
+            ));
         }
         md.push('\n');
     }
 
-    md.push_str("---\n\n*Generated by CodeMetrics — automated code quality & security auditing.*  \n");
+    md.push_str(
+        "---\n\n*Generated by CodeMetrics — automated code quality & security auditing.*  \n",
+    );
     md.push_str("*This report is machine-generated. Results should be reviewed by a qualified engineer before use in compliance filings.*\n");
     md
 }
@@ -4673,14 +5959,24 @@ fn setup_command() {
   \____\___/ \__,_|\___|_|  |_|\___|\__|_|  |_|\___|___/
 "#;
     println!("{}", ascii_art.cyan().bold());
-    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+    println!(
+        "{}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black()
+    );
     println!("{}", "  CodeMetrics Doctor & Setup".cyan().bold());
-    println!("{}\n", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+    println!(
+        "{}\n",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black()
+    );
 
     let mut all_passed = true;
 
     // Check cargo
-    if std::process::Command::new("cargo").arg("--version").output().is_ok() {
+    if std::process::Command::new("cargo")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
         println!("  {} cargo installed", "[✓]".green().bold());
     } else {
         println!("  {} cargo NOT installed", "[✗]".red().bold());
@@ -4689,7 +5985,11 @@ fn setup_command() {
     }
 
     // Check cargo-llvm-cov
-    if std::process::Command::new("cargo").args(["llvm-cov", "--version"]).output().is_ok() {
+    if std::process::Command::new("cargo")
+        .args(["llvm-cov", "--version"])
+        .output()
+        .is_ok()
+    {
         println!("  {} cargo-llvm-cov installed", "[✓]".green().bold());
     } else {
         println!("  {} cargo-llvm-cov NOT installed", "[✗]".red().bold());
@@ -4698,34 +5998,64 @@ fn setup_command() {
     }
 
     // Check llvm-tools-preview
-    let rustup_out = std::process::Command::new("rustup").args(["component", "list"]).output().ok();
+    let rustup_out = std::process::Command::new("rustup")
+        .args(["component", "list"])
+        .output()
+        .ok();
     if let Some(out) = rustup_out {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        if stdout.contains("llvm-tools-preview (installed)") || stdout.contains("llvm-tools (installed)") {
+        if stdout.contains("llvm-tools-preview (installed)")
+            || stdout.contains("llvm-tools (installed)")
+        {
             println!("  {} llvm-tools installed", "[✓]".green().bold());
         } else {
             println!("  {} llvm-tools NOT installed", "[✗]".red().bold());
-            println!("      => {}", "Run: rustup component add llvm-tools-preview".yellow());
+            println!(
+                "      => {}",
+                "Run: rustup component add llvm-tools-preview".yellow()
+            );
             all_passed = false;
         }
     } else {
-        println!("  {} rustup not found, could not verify llvm-tools", "[?]".yellow().bold());
+        println!(
+            "  {} rustup not found, could not verify llvm-tools",
+            "[?]".yellow().bold()
+        );
     }
 
     // Check .quality.toml
     if std::path::Path::new(".quality.toml").exists() {
-        println!("  {} .quality.toml configuration found", "[✓]".green().bold());
+        println!(
+            "  {} .quality.toml configuration found",
+            "[✓]".green().bold()
+        );
     } else {
         println!("  {} .quality.toml NOT found", "[✗]".red().bold());
         println!("      => {}", "Run: codemetrics init".yellow());
         all_passed = false;
     }
 
-    println!("\n{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+    println!(
+        "\n{}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black()
+    );
     if all_passed {
-        println!("  {}", "Everything looks good! Your codebase is ready.".green().bold());
+        println!(
+            "  {}",
+            "Everything looks good! Your codebase is ready."
+                .green()
+                .bold()
+        );
     } else {
-        println!("  {}", "Please resolve the missing requirements above.".red().bold());
+        println!(
+            "  {}",
+            "Please resolve the missing requirements above."
+                .red()
+                .bold()
+        );
     }
-    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black());
+    println!(
+        "{}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black()
+    );
 }
