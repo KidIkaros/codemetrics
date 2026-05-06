@@ -1,0 +1,58 @@
+# .quality.toml — CodeMetrics quality thresholds
+# Auto-generated for: rust
+# Used by: codemetrics check . and codemetrics run .
+# Run `codemetrics init` at any time to regenerate with updated detection.
+
+[project]
+ecosystem = "rust"
+test_cmd = "cargo test"
+coverage_cmd = "cargo llvm-cov --lcov"
+lcov_path = "lcov.info"
+
+[crap]
+threshold = 30
+warn_at = 15
+
+[debt]
+max_items = 0
+
+[doc]
+min_coverage = 80
+
+[complexity]
+max_violations = 0
+threshold = 10
+
+[taint]
+max_findings = 0
+
+[duplication]
+max_duplication = 0
+
+[risk]
+max_score = 50
+
+[coupling]
+max_coupling = 10
+
+[mutation]
+min_score = 80
+
+[security]
+max_vulnerabilities = 0
+
+[secrets]
+max_findings = 0
+
+[licenses]
+deny = ["GPL-3.0", "AGPL-3.0"]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "MPL-2.0"]
+
+[dead_code]
+max_findings = 0
+
+[type_coverage]
+min_coverage = 80
+
+[halstead]
+max_bug_estimate = 0.5

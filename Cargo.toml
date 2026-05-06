@@ -11,6 +11,13 @@ description = "CodeMetrics — production-grade code quality auditing toolkit (1
 keywords = [ "quality", "metrics", "security", "audit", "cli",]
 categories = [ "development-tools", "command-line-utilities", "development-tools::testing",]
 
+[workspace.dependencies]
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.1", features = ["fmt"] }
+toml = "0.8"
+
 [profile.release]
 lto = true
 codegen-units = 1

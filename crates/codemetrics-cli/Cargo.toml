@@ -9,6 +9,7 @@ description = "Unified headless CLI for codemetrics -- one command, JSON output,
 [dependencies]
 serde_json = "1"
 colored = "2"
+thiserror = { workspace = true }
 
 [package.version]
 workspace = true

@@ -6,54 +6,81 @@ on:
       - 'v*'
 
 jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --workspace --target ${{ matrix.target }}
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          cd target/${{ matrix.target }}/release
+          cp codemetrics${{ matrix.suffix }} ../../../release-assets/codemetrics-${{ matrix.os }}${{ matrix.suffix }}
+          cp codemetrics-server${{ matrix.suffix }} ../../../release-assets/codemetrics-server-${{ matrix.os }}${{ matrix.suffix }}
+          ls -la ../../../release-assets/
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum * > checksums-${{ matrix.os }}.txt
+          cat checksums-${{ matrix.os }}.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}
+          path: release-assets/*
+
   release:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        
-      - name: Build release binaries
-        run: cargo build --release --workspace
-        
-      - name: Prepare release assets
-        run: |
-          mkdir -p release-assets
-          cp target/release/codemetrics release-assets/
-          cp target/release/codemetrics-server release-assets/
-          cp target/release/crap release-assets/
-          cp target/release/mutate release-assets/
-          cp target/release/debt release-assets/
-          cp target/release/doccov release-assets/
-          cp target/release/dupfind release-assets/
-          cp target/release/coupling release-assets/
-          cp target/release/riskmap release-assets/
-          cp target/release/fuzz release-assets/
-          cp target/release/taint release-assets/
-          cp target/release/propcov release-assets/
-          ls -la release-assets/
-        
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Display structure of downloaded files
+        run: ls -la release-assets/
+
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          name: Release ${{ github.ref }}
           draft: false
           prerelease: false
-          
-      - name: Upload Release Assets
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./release-assets/
-          asset_name: codemetrics-bins
-          asset_content_type: application/octet-stream
+          files: release-assets/*
