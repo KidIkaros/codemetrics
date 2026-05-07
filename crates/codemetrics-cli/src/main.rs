@@ -10,6 +10,7 @@ mod batch;
 mod checks;
 mod cli;
 mod config;
+mod fix;
 mod health;
 mod history;
 mod hooks;
@@ -69,6 +70,7 @@ fn main() {
             ci,
             verbose,
             baseline,
+            fix,
         } => {
             let format = if ci { "json".to_string() } else { format };
             if ci {
@@ -203,8 +205,15 @@ fn main() {
             let passed_count = checks_results.iter().filter(|c| c.passed).count();
             let failed_count = checks_results.len() - passed_count;
             let total_checks = checks_results.len();
+            let passed = checks_results.iter().all(|c| c.passed);
 
-            let report = types::CheckReport {
+            // Print fix suggestions if --fix flag is enabled (before report consumes checks_results)
+            if fix {
+                let fixes = fix::generate_fixes(&checks_results);
+                fix::print_fix_suggestions(&fixes);
+            }
+
+            let mut report = types::CheckReport {
                 passed,
                 path: path.clone(),
                 checks: checks_results,
