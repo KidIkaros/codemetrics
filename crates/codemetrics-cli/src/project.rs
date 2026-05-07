@@ -1,9 +1,6 @@
-//!
-//! Project detection and profile management.
-//! Auto-detects the project type (Rust, Python, Go, JavaScript/TypeScript)
-//! and returns appropriate test commands, coverage commands, and quality thresholds.
-
-use std::path::Path;
+// ═══════════════════════════════════════════
+// PROJECT DETECTION
+// ═══════════════════════════════════════════
 
 /// Ecosystem detected from project root filesystem signals.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,15 +28,10 @@ impl std::fmt::Display for ProjectEcosystem {
 #[derive(Debug, Clone)]
 pub struct ProjectProfile {
     pub ecosystem: ProjectEcosystem,
-    /// Command + args to run the test suite, e.g. ["cargo", "test"]
     pub test_cmd: Vec<String>,
-    /// Command + args to collect coverage into `lcov_path`
     pub coverage_cmd: Vec<String>,
-    /// Where the coverage output file will be written
     pub lcov_path: String,
-    /// Source file extensions to watch for this ecosystem
     pub watch_extensions: Vec<String>,
-    /// Recommended quality thresholds (language-tuned)
     pub max_crap: f64,
     pub min_doc: f64,
     pub max_debt: usize,
@@ -55,10 +47,10 @@ impl ProjectProfile {
 /// Inspect filesystem signals starting at `root` and return a `ProjectProfile`.
 /// Falls back to unknown defaults when nothing is detected.
 pub fn detect_project(root: &str) -> ProjectProfile {
-    let p = Path::new(root);
+    let p = std::path::Path::new(root);
 
     // Rust — Cargo.toml present
-    if p.join("Cargo.toml").exists() || Path::new("Cargo.toml").exists() {
+    if p.join("Cargo.toml").exists() || std::path::Path::new("Cargo.toml").exists() {
         return ProjectProfile {
             ecosystem: ProjectEcosystem::Rust,
             test_cmd: vec!["cargo".into(), "test".into()],
@@ -79,7 +71,7 @@ pub fn detect_project(root: &str) -> ProjectProfile {
     }
 
     // Go — go.mod present
-    if p.join("go.mod").exists() || Path::new("go.mod").exists() {
+    if p.join("go.mod").exists() || std::path::Path::new("go.mod").exists() {
         return ProjectProfile {
             ecosystem: ProjectEcosystem::Go,
             test_cmd: vec!["go".into(), "test".into(), "./...".into()],
@@ -89,7 +81,7 @@ pub fn detect_project(root: &str) -> ProjectProfile {
                 "-coverprofile=coverage.out".into(),
                 "./...".into(),
             ],
-            lcov_path: String::new(), // go coverage not lcov; skip coverage feed
+            lcov_path: String::new(),
             watch_extensions: vec!["go".into()],
             max_crap: 20.0,
             min_doc: 80.0,
@@ -101,8 +93,8 @@ pub fn detect_project(root: &str) -> ProjectProfile {
     // Python — pyproject.toml or setup.py present
     if p.join("pyproject.toml").exists()
         || p.join("setup.py").exists()
-        || Path::new("pyproject.toml").exists()
-        || Path::new("setup.py").exists()
+        || std::path::Path::new("pyproject.toml").exists()
+        || std::path::Path::new("setup.py").exists()
     {
         return ProjectProfile {
             ecosystem: ProjectEcosystem::Python,
@@ -122,11 +114,10 @@ pub fn detect_project(root: &str) -> ProjectProfile {
     }
 
     // JavaScript/TypeScript — package.json present
-    if p.join("package.json").exists() || Path::new("package.json").exists() {
-        // Prefer vitest if vitest.config exists, otherwise fall back to jest/npm test
+    if p.join("package.json").exists() || std::path::Path::new("package.json").exists() {
         let has_vitest = p.join("vitest.config.ts").exists()
             || p.join("vitest.config.js").exists()
-            || Path::new("vitest.config.ts").exists();
+            || std::path::Path::new("vitest.config.ts").exists();
         let test_cmd = if has_vitest {
             vec!["npx".into(), "vitest".into(), "run".into()]
         } else {

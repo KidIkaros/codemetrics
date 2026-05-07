@@ -1,8 +1,53 @@
-//!
-//! Progress indicators and TTY detection.
-//! Provides spinners, progress bars, and terminal detection for CLI feedback.
+// ═══════════════════════════════════════════
+// PROGRESS / SPINNER
+// ═══════════════════════════════════════════
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
+use colored::Colorize;
+
+/// Run `f` on the current thread while a spinner ticks on a background thread.
+/// Returns the result of `f`. The spinner shows elapsed time in real-time.
+pub fn run_with_spinner<T, F>(label: &str, f: F) -> T
+where
+    F: FnOnce() -> T,
+    T: Send + 'static,
+{
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let tty = is_tty();
+    let label_str = label.to_string();
+    let done = Arc::new(AtomicBool::new(false));
+    let done_clone = done.clone();
+    let start = Instant::now();
+
+    let ticker = std::thread::spawn(move || {
+        if !tty {
+            eprintln!("  … {}", label_str);
+            return;
+        }
+        let mut frame = 0usize;
+        let mut last_len = 0usize;
+        loop {
+            if done_clone.load(Ordering::Relaxed) {
+                break;
+            }
+            let f = SPINNER_FRAMES[frame % SPINNER_FRAMES.len()];
+            frame += 1;
+            let elapsed = format_elapsed(start.elapsed());
+            let line = format!("  {} {}  {}", f.cyan(), label_str, elapsed.bright_black());
+            eprint!("\r{:<width$}", line, width = last_len.max(line.len()));
+            last_len = line.len();
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
+    });
+
+    let result = f();
+    done.store(true, Ordering::Relaxed);
+    let _ = ticker.join();
+    result
+}
 
 /// Detect whether stderr is a real TTY (not CI, not piped).
 pub fn is_tty() -> bool {
@@ -12,7 +57,6 @@ pub fn is_tty() -> bool {
     {
         return false;
     }
-    // Check if stderr fd 2 is a terminal via isatty syscall
     #[cfg(unix)]
     {
         unsafe { libc_isatty(2) }
@@ -35,16 +79,15 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 
 /// An overall progress bar for multi-step operations (run_batch).
 pub struct Bar {
-    total: usize,
-    done: usize,
-    start: Instant,
-    tty: bool,
-    last_len: usize,
-    current_tool: String,
+    pub total: usize,
+    pub done: usize,
+    pub start: Instant,
+    pub tty: bool,
+    pub last_len: usize,
+    pub current_tool: String,
 }
 
 impl Bar {
-    /// Create a new progress bar.
     pub fn new(total: usize) -> Self {
         let tty = is_tty();
         Self {
@@ -57,13 +100,11 @@ impl Bar {
         }
     }
 
-    /// Set the currently running tool name.
     pub fn set_current(&mut self, tool: &str) {
         self.current_tool = tool.to_string();
         self.render();
     }
 
-    /// Advance the progress bar after completing a tool.
     pub fn advance(&mut self, tool: &str, passed: bool, duration_ms: u64) {
         self.done += 1;
         let icon = if passed {
@@ -74,7 +115,6 @@ impl Bar {
         let name_col = if passed { tool.normal() } else { tool.red() };
         let dur_str = format_ms(duration_ms);
         if self.tty {
-            // Clear spinner line, print result
             eprintln!("\r{:<width$}", "", width = self.last_len);
             eprintln!("\r{} {:<18}  {}", icon, name_col, dur_str.bright_black());
         } else {
@@ -84,8 +124,7 @@ impl Bar {
         self.render();
     }
 
-    /// Render the progress bar (TTY only).
-    fn render(&mut self) {
+    pub fn render(&mut self) {
         if !self.tty {
             return;
         }
@@ -110,78 +149,58 @@ impl Bar {
             String::new()
         } else {
             format!(
-                "  {} Running: {}  ({})",
+                "  {} Running: {}  ({}",
                 frame.cyan(),
                 self.current_tool.bold(),
                 format_elapsed(elapsed)
             )
         };
-        let line = format!(
-            "\r  [{}] {}  {}%   {}   {}",
-            bar.cyan(),
+        let bar_line = format!(
+            "  [{}/{}] {}  {}%   {}",
             self.done,
             self.total,
+            bar.cyan(),
             pct,
-            running
+            eta_str.bright_black()
         );
-        self.last_len = line.len();
-        eprint!("{}", line);
+        eprint!(
+            "\r{:<width$}",
+            bar_line,
+            width = self.last_len.max(bar_line.len())
+        );
+        self.last_len = bar_line.len();
+        if !running.is_empty() {
+            eprint!("\n{}", running);
+            eprint!("\x1b[1A");
+        }
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+    }
+
+    pub fn finish(&self) {
+        if self.tty {
+            eprintln!("\r{:<80}", "");
+        }
     }
 }
 
-/// Format milliseconds as a human-readable string.
+pub fn format_elapsed(d: std::time::Duration) -> String {
+    let total_ms = d.as_millis();
+    if total_ms < 1000 {
+        format!("{:.1}s", total_ms as f64 / 1000.0)
+    } else {
+        format!("{:.1}s", d.as_secs_f64())
+    }
+}
+
 pub fn format_ms(ms: u64) -> String {
     if ms < 1000 {
         format!("{}ms", ms)
-    } else if ms < 60000 {
+    } else {
         format!("{:.1}s", ms as f64 / 1000.0)
-    } else {
-        format_duration(Duration::from_millis(ms))
     }
 }
 
-/// Format a duration as mm:ss.
-pub fn format_duration(d: Duration) -> String {
+pub fn format_duration(d: std::time::Duration) -> String {
     let secs = d.as_secs();
-    let m = secs / 60;
-    let s = secs % 60;
-    format!("{}:{:02}", m, s)
-}
-
-/// Format elapsed time as mm:ss.ms.
-pub fn format_elapsed(d: Duration) -> String {
-    let secs = d.as_secs();
-    let ms = d.subsec_millis();
-    let m = secs / 60;
-    let s = secs % 60;
-    format!("{}:{:02}.{}", m, s, ms / 100)
-}
-
-/// Run a function with a spinner (TTY only).
-pub fn run_with_spinner<F>(label: &str, f: F) -> i32
-where
-    F: FnOnce() -> Option<i32>,
-{
-    let tty = is_tty();
-    if tty {
-        let done = std::sync::atomic::AtomicBool::new(false);
-        let done_ref = &done;
-        // Spawn spinner thread
-        let label = label.to_string();
-        let handle = std::thread::spawn(move || {
-            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let mut i = 0;
-            while !done_ref.load(std::sync::atomic::Ordering::Relaxed) {
-                eprint!("\r  {} {}  ", frames[i % frames.len()].cyan(), label);
-                i += 1;
-                std::thread::sleep(Duration::from_millis(80));
-            }
-        });
-        let result = f();
-        done.store(true, std::sync::atomic::Ordering::Relaxed);
-        let _ = handle.join();
-        result.unwrap_or(1)
-    } else {
-        f().unwrap_or(1)
-    }
+    format!("{:02}:{:02}", secs / 60, secs % 60)
 }
