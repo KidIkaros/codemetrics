@@ -166,6 +166,64 @@ pub fn find_source_files(path: &str, recursive: bool, extensions: &[&str]) -> Ve
     files
 }
 
+/// Find source files with any of the given extensions, with ignore pattern filtering.
+pub fn find_source_files_filtered(
+    path: &str,
+    recursive: bool,
+    extensions: &[&str],
+    ignore_patterns: &[String],
+) -> Vec<String> {
+    let mut files = find_source_files(path, recursive, extensions);
+    if !ignore_patterns.is_empty() {
+        files.retain(|f| !is_ignored_by_patterns(f, ignore_patterns));
+    }
+    files
+}
+
+/// Check if a file path matches any ignore pattern.
+fn is_ignored_by_patterns(file_path: &str, patterns: &[String]) -> bool {
+    use std::path::Path;
+    let path = Path::new(file_path);
+    let file_name = path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    for pattern in patterns {
+        let pat = pattern.trim();
+        if pat.is_empty() { continue; }
+
+        // Directory pattern (ends with /)
+        if pat.ends_with('/') {
+            let dir_name = &pat[..pat.len() - 1];
+            for component in path.components() {
+                let comp = component.as_os_str().to_string_lossy();
+                if comp == dir_name { return true; }
+            }
+            continue;
+        }
+
+        // *.ext pattern
+        if pat.starts_with("*.") {
+            let ext = &pat[1..];
+            if file_name.ends_with(ext) { return true; }
+            continue;
+        }
+
+        // Exact filename match
+        if file_name == pat { return true; }
+
+        // Path component match
+        for component in path.components() {
+            let comp = component.as_os_str().to_string_lossy();
+            if comp == pat { return true; }
+        }
+
+        // Full path suffix match
+        if file_path.ends_with(pat) { return true; }
+    }
+    false
+}
+
 /// Check whether a file path has one of the given extensions.
 fn should_include_file(path: &Path, extensions: &[&str]) -> bool {
     path.extension()

@@ -283,3 +283,59 @@ pub fn discover_command(format: &str) {
         }
     }
 }
+
+/// Generate SARIF output from a check report.
+pub fn output_sarif(report: &CheckReport, path: &str) -> String {
+    let mut sarif_results = Vec::new();
+
+    for check in &report.checks {
+        if !check.passed {
+            let rule_id = check.rule_id.as_deref().unwrap_or(&check.name);
+            let level = match check.severity.as_deref() {
+                Some("high") | Some("critical") | Some("error") => "error",
+                Some("medium") | Some("warning") => "warning",
+                _ => "note",
+            };
+
+            sarif_results.push(serde_json::json!({
+                "ruleId": rule_id,
+                "level": level,
+                "message": {
+                    "text": format!("{}: {}", check.name, check.message)
+                },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": path
+                        }
+                    }
+                }]
+            }));
+        }
+    }
+
+    let sarif = serde_json::json!({
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "CodeMetrics",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "informationUri": "https://github.com/KidIkaros/codemetrics",
+                    "rules": report.checks.iter().map(|c| {
+                        serde_json::json!({
+                            "id": c.rule_id.as_deref().unwrap_or(&c.name),
+                            "shortDescription": {
+                                "text": c.name.clone()
+                            }
+                        })
+                    }).collect::<Vec<_>>()
+                }
+            },
+            "results": sarif_results
+        }]
+    });
+
+    serde_json::to_string_pretty(&sarif).expect("Failed to serialize SARIF")
+}

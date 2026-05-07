@@ -82,6 +82,8 @@ pub enum Commands {
         ci: bool,
         #[arg(long)]
         verbose: bool,
+        #[arg(long)]
+        baseline: Option<String>,
     },
 
     /// Verify environment dependencies (doctor)

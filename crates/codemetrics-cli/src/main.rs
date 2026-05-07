@@ -13,6 +13,7 @@ mod config;
 mod health;
 mod history;
 mod hooks;
+mod ignore;
 mod output;
 mod progress;
 mod project;
@@ -67,15 +68,19 @@ fn main() {
             only,
             ci,
             verbose,
+            baseline,
         } => {
             let format = if ci { "json".to_string() } else { format };
             if ci {
                 std::env::set_var("CODEMETRICS_NO_PROGRESS", "1");
             }
 
+            // Load ignore patterns from .codemetricsignore
+            let ignore_patterns = ignore::load_ignore_patterns(&path);
+
             // Auto-load .quality.toml if present; CLI flags override file values.
             // Config loading would use config::Config via load_config_thresholds.
-            drop::<config::Config>(config::Config { project: None, crap: None, debt: None, doc: None, complexity: None, taint: None, duplication: None, risk: None, coupling: None, mutation: None, security: None, secrets: None, licenses: None, dead_code: None, type_coverage: None, halstead: None });
+            let _config_loaded = config::Config { project: None, crap: None, debt: None, doc: None, complexity: None, taint: None, duplication: None, risk: None, coupling: None, mutation: None, security: None, secrets: None, licenses: None, dead_code: None, type_coverage: None, halstead: None };
 
             let skip_list: Vec<String> = skip
                 .map(|s| s.split(',').map(|s| s.trim().to_lowercase()).collect())
@@ -213,6 +218,27 @@ fn main() {
                 },
             };
 
+            // Handle baseline comparison
+            let mut baseline_regressions = false;
+            if let Some(baseline_path) = &baseline {
+                if let Ok(baseline_content) = std::fs::read_to_string(baseline_path) {
+                    if let Ok(baseline_report) = serde_json::from_str::<types::CheckReport>(&baseline_content) {
+                        // Check for regressions (checks that passed in baseline but fail now)
+                        for current_check in &report.checks {
+                            if !current_check.passed {
+                                if let Some(baseline_check) = baseline_report.checks.iter().find(|c| c.name == current_check.name) {
+                                    if baseline_check.passed {
+                                        eprintln!("  {} {}: now failing (was passing in baseline)", "✗".red().bold(), current_check.name.red().bold());
+                                        baseline_regressions = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Output results based on format
             match format.as_str() {
                 "text" => {
                     health::print_summary_box(
@@ -226,10 +252,14 @@ fn main() {
                     );
                 }
                 "ndjson" => output::output_ndjson(&report),
+                "sarif" => {
+                    let sarif = output::output_sarif(&report, &path);
+                    println!("{}", sarif);
+                }
                 _ => output::output_json(&report),
             }
 
-            if passed { 0 } else { 1 }
+            if passed && !baseline_regressions { 0 } else { 1 }
         }
         Commands::Crap { path, recursive, coverage, format } => {
             let result = if format == "text" {
