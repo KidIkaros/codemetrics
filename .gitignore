@@ -1,2 +1,5 @@
 /target
 target/lcov.info
+.codemetrics-baseline.sarif
+.codemetrics-cache.json
+.codemetrics-history/

@@ -1,6 +1,6 @@
 # CodeMetrics
 
-<img src="logo.svg" alt="CodeMetrics Logo" width="400"/>
+<img src="assets/logo.svg" alt="CodeMetrics Logo" width="400"/>
 
 [![CI](https://github.com/KidIkaros/codemetrics/actions/workflows/codemetrics.yml/badge.svg)](https://github.com/KidIkaros/codemetrics/actions)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange)](https://rust-lang.org)
@@ -163,7 +163,7 @@ Reports: `codemetrics report . --format <html|markdown|pdf> [--open]`.
 | Test Suite | `cargo test` — workspace-wide passing (2 known flaky edge cases ignored) |
 | Self-Hosting | Runs on its own codebase continuously |
 
-See [`PROJECT_STATUS.md`](PROJECT_STATUS.md) for roadmap and known limitations.
+See [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for roadmap and known limitations.
 
 ---
 
