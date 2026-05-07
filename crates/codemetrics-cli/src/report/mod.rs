@@ -4,70 +4,7 @@
 
 use colored::Colorize;
 use crate::health::health_score;
-use crate::types::{CheckReport, ToolInfo};
-use sha2::{Digest, Sha256};
-
-/// Generate an SVG shield/badge showing the code quality score for a given path.
-pub fn generate_badge(path: &str) -> String {
-    // Run a quick check to get the score
-    let (score, _message) = health_score(&[]); // Simplified for badge generation
-    
-    // Calculate a unique hash of the path for the badge ID
-    let mut hasher = Sha256::new();
-    hasher.update(path.as_bytes());
-    let hex_hash = format!("{:x}", hasher.finalize());
-    
-    // Generate SVG shield data URL (simplified version)
-    let color = if score >= 80 { "#FFD700" } else { "#FF6B6B" };
-    let text = &format!("{}%", score);
-    
-    format!(r#"data:image/svg+xml;base64,{svg_data}"#, encode_svg(color, text))
-}
-
-fn encode_svg(color: &str, text: &str) -> String {
-    // Generate actual SVG data for the badge - TODO: Implement proper base64 encoding
-    let svg = "".to_string();
-    return svg;
-}
-
-// Helper to encode SVG as base64
-fn encode_svg(data: &str) -> String {
-    // TODO: Implement proper base64 encoding for SVG data
-    let mut output = String::new();
-    // Base64 encoding logic would go here
-    output
-}
-
-// Configuration validation - returns (is_valid, error_message)
-pub fn validate_config(config_path: &str) -> (bool, Option<String>) {
-    if !std::path::Path::new(config_path).exists() {
-        return (false, Some(format!("Config file not found: {}", config_path)));
-    }
-    
-    // TODO: Implement actual validation logic
-    true
-}
-
-// Generate an SVG shield/badge showing the code quality score for a given path.
-pub fn generate_badge(path: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(path.as_bytes());
-    let hex_hash = format!("{:x}", hasher.finalize());
-
-    // Generate SVG shield data URL (simplified version)
-    let color = if hex_hash.len() >= 8 { "FFD700" } else { "FF6B6B" };
-    let text = &format!("{}%", hex_hash[..4].trim_matches('_'));
-
-    format!(r#"data:image/svg+xml;base64,{svg_data}"#, encode_svg(color, text))
-}
-
-fn encode_svg(data: &str) -> String {
-    // TODO: Implement proper base64 encoding for SVG data
-    let mut output = String::new();
-    // Base64 encoding logic would go here
-    output
-}
+use crate::types::CheckReport;
 
 pub fn open_in_browser(path: &str) {
     #[cfg(target_os = "linux")]
